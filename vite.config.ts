@@ -1,37 +1,47 @@
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
-import { ConfigEnv, loadEnv, UserConfig } from 'vite'
-import { createVitePlugins } from './build/vite'
+import AutoImport from 'unplugin-auto-import/vite'
+import Component from 'unplugin-vue-components/vite'
+import { VueRouterAutoImports } from 'unplugin-vue-router'
+import VueRouter from 'unplugin-vue-router/vite'
+import { defineConfig } from 'vite'
+import vueDevTools from 'vite-plugin-vue-devtools'
 
-export default ({ mode, command }: ConfigEnv): UserConfig => {
-  const root = process.cwd()
-  const env = loadEnv(mode, root)
-  const { VITE_APP_ENV, VITE_APP_PUBLIC_PATH } = env
-  console.log(VITE_APP_ENV)
-  return {
-    base: VITE_APP_PUBLIC_PATH,
-    plugins: [vue(), tailwindcss(), ...createVitePlugins(env, command === 'build')],
-    // esbuild: {
-    //   pure: VITE_APP_ENV === 'test' ? [] : ['console.log']
-    // },
-    server: {
-      host: true,
-      port: 5173,
-      proxy: {
-        '/api': {
-          target: 'http://localhost:3456',
-          // target: 'https://api.team-tool.top',
-          ws: false,
-          changeOrigin: true
-        }
-      }
+const RouteGenerateExclude = ['**/components/**', '**/layouts/**', '**/data/**', '**/types/**']
+
+export default defineConfig({
+  plugins: [vue(), tailwindcss(), VueRouter({
+    exclude: RouteGenerateExclude,
+    dts: 'src/types/typed-router.d.ts',
+  }), vueDevTools(), AutoImport({
+    include: [
+      /\.[tj]sx?$/,
+      /\.vue$/,
+    ],
+    imports: [
+      'vue',
+      VueRouterAutoImports,
+    ],
+    dirs: [
+      'src/composables/**/*.ts',
+      'src/constants/**/*.ts',
+      'src/store/**/*.ts',
+    ],
+    defaultExportByFilename: true,
+    dts: 'src/types/auto-import.d.ts',
+  }), Component({
+    dirs: [
+      'src/components',
+      'src/components/ui',
+    ],
+    collapseSamePrefixes: true,
+    directoryAsNamespace: true,
+    dts: 'src/types/auto-import-components.d.ts',
+  })],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
     },
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-        '~': path.join(__dirname, './src/assets')
-      }
-    }
-  }
-}
+  },
+})

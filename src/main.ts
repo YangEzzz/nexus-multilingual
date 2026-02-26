@@ -1,10 +1,20 @@
 import { createApp } from 'vue'
-import './index.css'
-import router from './router'
-import store from './store'
 import App from './App.vue'
+import { setupPlugins } from './plugins'
+import './style.css'
+import 'vue-sonner/style.css' // vue sonner style
 
-const app = createApp(App)
-app.use(router)
-app.use(store)
-app.mount('#app')
+import '@/assets/index.css'
+import '@/assets/scrollbar.css'
+import '@/assets/themes.css'
+import '@/assets/chart-theme.css'
+
+const bootstrap = () => {
+  const app = createApp(App)
+
+  setupPlugins(app)
+
+  app.mount('#app')
+}
+
+bootstrap()

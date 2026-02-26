@@ -1,15 +1,15 @@
 import type {
   AxiosError,
+  AxiosRequestConfig,
   AxiosRequestHeaders,
   AxiosResponse,
   InternalAxiosRequestConfig,
-  AxiosRequestConfig
 } from 'axios'
 import axios from 'axios'
 import qs from 'qs'
 import { ResultEnum } from '@/request/types.ts'
-import { getToken, removeToken } from '@/utils/auth'
 import router from '@/router'
+import { getToken, removeToken } from '@/utils/auth'
 // import router from '@/router'
 
 // 定义响应数据类型
@@ -24,7 +24,7 @@ const request = axios.create({
   // API 请求的默认前缀
   baseURL: import.meta.env.VITE_APP_API_BASE_URL,
   timeout: 600000, // 请求超时时间
-  adapter: 'fetch'
+  adapter: 'fetch',
 })
 
 export type RequestError = AxiosError<{
@@ -34,7 +34,7 @@ export type RequestError = AxiosError<{
 }>
 
 // 异常拦截处理器
-function errorHandler(error: RequestError): Promise<never> {
+const errorHandler = (error: RequestError): Promise<never> => {
   const status = error.response?.status
   const errorMessage = error.response?.data?.errorMessage || error.message || '请求错误'
 
@@ -63,20 +63,20 @@ function errorHandler(error: RequestError): Promise<never> {
 }
 
 // 请求拦截器
-function requestHandler(
-  config: InternalAxiosRequestConfig
-): InternalAxiosRequestConfig | Promise<InternalAxiosRequestConfig> {
+const requestHandler = (
+  config: InternalAxiosRequestConfig,
+): InternalAxiosRequestConfig | Promise<InternalAxiosRequestConfig> => {
   const data = config.data || false
 
   // 添加token到请求头
   const token = getToken()
   if (token) {
-    ;(config.headers as AxiosRequestHeaders)['Authorization'] = `Bearer ${token}`
+    ;(config.headers as AxiosRequestHeaders).Authorization = `Bearer ${token}`
   }
 
   if (
-    config.method?.toUpperCase() === 'POST' &&
-    (config.headers as AxiosRequestHeaders)['Content-Type'] === 'application/x-www-form-urlencoded'
+    config.method?.toUpperCase() === 'POST'
+    && (config.headers as AxiosRequestHeaders)['Content-Type'] === 'application/x-www-form-urlencoded'
   ) {
     config.data = qs.stringify(data)
   }
@@ -87,7 +87,7 @@ function requestHandler(
 request.interceptors.request.use(requestHandler, errorHandler)
 
 // 响应拦截器
-function responseHandler(response: AxiosResponse) {
+const responseHandler = (response: AxiosResponse) => {
   const { data } = response
   if (!data) {
     throw new Error('请求没有返回值')
@@ -103,7 +103,8 @@ function responseHandler(response: AxiosResponse) {
 
   if (code !== ResultEnum.SUCCESS) {
     throw new Error(data.message || '请求失败')
-  } else {
+  }
+  else {
     return data
   }
 }
@@ -134,7 +135,7 @@ export const api = {
     return request({
       method: 'POST',
       responseType: 'stream',
-      ...option
+      ...option,
     }).then((response) => {
       if (response instanceof Response) {
         return response.body
@@ -155,7 +156,7 @@ export const api = {
     return request({
       method: 'GET',
       responseType: 'blob',
-      ...option
+      ...option,
     })
   },
 
@@ -163,25 +164,26 @@ export const api = {
     return request({
       method: 'POST',
       headers: {
-        'Content-Type': 'multipart/form-data'
+        'Content-Type': 'multipart/form-data',
       },
-      ...option
+      ...option,
     })
-  }
+  },
 }
 
 // 请求重试函数
-export async function retryRequest<T>(requestFn: () => Promise<T>, maxRetries = 3, delay = 1000): Promise<T> {
+export const retryRequest = async <T>(requestFn: () => Promise<T>, maxRetries = 3, delay = 1000): Promise<T> => {
   let retries = 0
 
   const execute = async (): Promise<T> => {
     try {
       return await requestFn()
-    } catch (error) {
+    }
+    catch (error) {
       if (retries < maxRetries) {
         retries++
         console.log(`请求失败，第${retries}次重试...`)
-        await new Promise((resolve) => setTimeout(resolve, delay))
+        await new Promise(resolve => setTimeout(resolve, delay))
         return execute()
       }
       throw error

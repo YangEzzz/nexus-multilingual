@@ -1,10 +1,21 @@
 <script setup lang="ts">
+import Loading from '@/components/Loading.vue'
 import { Toaster } from '@/components/ui/sonner'
+import { useSystemTheme } from '@/composables/use-system-theme'
+
+useSystemTheme()
 </script>
 
 <template>
-  <router-view></router-view>
-  <Toaster rich-colors />
-</template>
+  <Toaster />
 
-<style scoped></style>
+  <Suspense>
+    <router-view v-slot="{ Component, route }">
+      <component :is="Component" :key="route" />
+    </router-view>
+
+    <template #fallback>
+      <Loading />
+    </template>
+  </Suspense>
+</template>
