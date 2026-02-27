@@ -224,9 +224,32 @@ function stopEdit() {
 }
 
 const focusElement = (el: any) => {
-  if (el && typeof el.focus === 'function') {
-    // Focus automatically when the element is mounted
-    el.focus()
+  if (el) {
+    // Handle both direct elements and Vue component instances
+    let nativeEl = el.$el || el
+    
+    // If the element is a wrapper container, find the actual input or textarea inside
+    if (nativeEl && nativeEl.tagName !== 'INPUT' && nativeEl.tagName !== 'TEXTAREA' && typeof nativeEl.querySelector === 'function') {
+      nativeEl = nativeEl.querySelector('input, textarea') || nativeEl
+    }
+
+    if (nativeEl && typeof nativeEl.focus === 'function') {
+      nativeEl.focus()
+      // Use setTimeout to ensure the DOM is updated and value is populated before selecting
+      setTimeout(() => {
+        if (typeof nativeEl.select === 'function') {
+          nativeEl.select()
+        }
+      }, 0)
+    } else if (typeof el.focus === 'function') {
+      // Fallback for custom components that proxy focus but aren't native inputs
+      el.focus()
+      setTimeout(() => {
+        if (typeof el.select === 'function') {
+          el.select()
+        }
+      }, 0)
+    }
   }
 }
 
@@ -327,17 +350,18 @@ function confirmExport() {
       </div>
       <div class="flex gap-2">
         <UiButton 
+          variant="default"
           @click="addNewTerm"
         >
-          <Plus class="w-4 h-4 mr-2" />
+          <Plus class="w-4 h-4" />
           新建词条
         </UiButton>
-        <UiButton 
-          variant="secondary"
+        <UiButton
           @click="openExportModal"
+          class="bg-green-500 hover:bg-green-600 text-white"
         >
-          <Download class="w-4 h-4 mr-2" />
-          多语言导出...
+          <Download class="w-4 h-4" />
+          多语言导出
         </UiButton>
       </div>
     </div>
