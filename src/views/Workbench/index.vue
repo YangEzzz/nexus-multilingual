@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Download, Plus, Trash2, Search, X, Check, PanelRightClose, CalendarDays } from 'lucide-vue-next'
+import { Download, Plus, Trash2, Search, CalendarDays, Wand2, Loader2 } from 'lucide-vue-next'
+import { ai } from '@/lib/gemini'
+import { toast } from 'vue-sonner'
 
 interface Translation {
   [key: string]: string
@@ -103,7 +105,9 @@ const filteredTerms = computed(() => {
                        term.module.toLowerCase().includes(searchQuery.value.toLowerCase())
     
     // Module match
-    const matchModule = selectedModule.value === 'all' || term.module === selectedModule.value
+    const matchModule = selectedModule.value === 'all' || 
+                        (selectedModule.value === '__none__' && term.module === '') || 
+                        term.module === selectedModule.value
     
     // Status match
     const matchStatus = selectedStatus.value === 'all' || term.status === selectedStatus.value
@@ -119,9 +123,6 @@ const statusOptions = [
   { value: 'published', label: '已发布', color: 'bg-green-500' }
 ]
 
-function getStatusLabel(status: string) {
-  return statusOptions.find(o => o.value === status)?.label || status
-}
 
 function getStatusColor(status: string) {
   return statusOptions.find(o => o.value === status)?.color || 'bg-gray-500'
@@ -149,6 +150,69 @@ function deleteTerm(id: string) {
   terms.value = terms.value.filter(t => t.id !== id)
 }
 
+const translatingTerms = ref(new Set<string>())
+
+async function translateRow(term: TermItem) {
+  if (translatingTerms.value.has(term.id)) return
+  
+  translatingTerms.value.add(term.id)
+  try {
+    const prompt = `翻译以下内容，这是一个智能体APP的内容并将其翻译为本地化语言。
+格式要求：你必须返回一个合法的 JSON 对象。不要返回任何 Markdown 标记符（如 \`\`\`json ），不要返回任何解释。
+JSON 键名必须严格是以下这些代号：cn, en, cht, de, fr, ru, jp, pt, es, vi, th, ind，对应的值为各个语言翻译后的文本。如果有某个语言你不知道怎么翻译，请返回空字符串 ""。
+
+待翻译原文参考：
+描述和上下文: ${term.description || '无'}
+现有参考翻译 (若有可参考，若无请根据键名和描述推断):
+${Object.entries(term.translations).filter(([_, val]) => val).map(([lang, val]) => `${lang}: ${val}`).join('\n')}
+`
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-pro-preview',
+      contents: prompt,
+      config: {
+        temperature: 0.2
+      }
+    });
+
+    const result = response.text?.trim() || ''
+    // clean up potential markdown tags if the model still outputs them
+    const cleanJsonStr = result.replace(/^```json/gi, '').replace(/^```/g, '').replace(/```$/g, '').trim()
+    
+    let translatedData = {}
+    try {
+      translatedData = JSON.parse(cleanJsonStr)
+    } catch(e) {
+      console.error('Failed to parse JSON form AI response:', cleanJsonStr)
+      throw new Error('AI 返回的数据格式无法解析为 JSON')
+    }
+
+    // fill the translated data back into the row
+    targetLanguages.value.forEach(lang => {
+      if (translatedData[lang.code as keyof typeof translatedData] !== undefined) {
+        term.translations[lang.code] = translatedData[lang.code as keyof typeof translatedData]
+      }
+    })
+
+    // Update history
+    if (!term.history) term.history = []
+    term.history.unshift({
+      time: new Date().toLocaleString(),
+      action: '使用了 AI 进行了全语言自动翻译',
+      user: 'AI 助理'
+    })
+    term.updatedAt = new Date().toLocaleString()
+
+  } catch (error) {
+    console.error('AI 翻译失败:', error)
+    toast.error('AI 翻译失败', {
+      description: '请检查控制台或网络配置。'
+    })
+  } finally {
+    translatingTerms.value.delete(term.id)
+  }
+}
+
 const activeEditKey = ref<string | null>(null)
 
 function startEdit(key: string) {
@@ -170,6 +234,7 @@ const showExportModal = ref(false)
 const selectedExportLangs = ref<string[]>([])
 const isDrawerOpen = ref(false)
 const activeDrawerTerm = ref<TermItem | null>(null)
+const presentDeletingId = ref<string | null>(null)
 
 function openDrawer(term: TermItem) {
   activeDrawerTerm.value = term
@@ -214,7 +279,9 @@ function deselectAllExportLangs() {
 
 function confirmExport() {
   if (selectedExportLangs.value.length === 0) {
-    alert('请至少选择一种语言导出！')
+    toast.warning('导出提醒', {
+      description: '请至少选择一种语言导出！'
+    })
     return
   }
 
@@ -241,7 +308,9 @@ function confirmExport() {
   })
   
   // Alert the user
-  alert(`已触发 ${langsToExport.length} 个语言文件的下载！`)
+  toast.success('导出成功', {
+    description: `已触发 ${langsToExport.length} 个语言文件的下载！`
+  })
   closeExportModal()
 }
 
@@ -257,20 +326,19 @@ function confirmExport() {
         </p>
       </div>
       <div class="flex gap-2">
-        <button 
+        <UiButton 
           @click="addNewTerm"
-          class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition"
         >
           <Plus class="w-4 h-4 mr-2" />
           新建词条
-        </button>
-        <button 
+        </UiButton>
+        <UiButton 
+          variant="secondary"
           @click="openExportModal"
-          class="inline-flex items-center px-4 py-2 bg-zinc-800 text-white rounded-md text-sm font-medium hover:bg-zinc-700 transition dark:bg-gray-200 dark:text-zinc-900 dark:hover:bg-gray-300"
         >
           <Download class="w-4 h-4 mr-2" />
           多语言导出...
-        </button>
+        </UiButton>
       </div>
     </div>
 
@@ -278,66 +346,129 @@ function confirmExport() {
     <div class="flex gap-4 p-4 bg-white dark:bg-zinc-950 rounded-lg shadow-sm border border-gray-100 dark:border-zinc-800">
       <div class="flex-1 relative">
         <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input 
+        <UiInput 
           v-model="searchQuery" 
           placeholder="搜索 Keyword... (例如 confirm)"
-          class="w-full pl-9 pr-4 py-2 border rounded-md text-sm dark:bg-zinc-900 dark:border-zinc-700 dark:text-gray-100 outline-none focus:border-blue-500"
+          class="pl-9"
         />
       </div>
       
-      <select 
-        v-model="selectedModule"
-        class="border rounded-md px-3 py-2 text-sm dark:bg-zinc-900 dark:border-zinc-700 dark:text-gray-100 outline-none focus:border-blue-500"
-      >
-        <option value="all">所有模块</option>
-        <option v-for="mod in modules" :key="mod" :value="mod">{{ mod === '' ? '(无模块)' : mod }}</option>
-      </select>
+      <UiSelect v-model="selectedModule">
+        <UiSelectTrigger class="w-[180px]">
+          <UiSelectValue placeholder="选择模块" />
+        </UiSelectTrigger>
+        <UiSelectContent>
+          <UiSelectItem value="all">所有模块</UiSelectItem>
+          <UiSelectItem v-for="mod in modules" :key="mod" :value="mod === '' ? '__none__' : mod">
+            {{ mod === '' ? '(无模块)' : mod }}
+          </UiSelectItem>
+        </UiSelectContent>
+      </UiSelect>
 
-      <select 
-        v-model="selectedStatus"
-        class="border rounded-md px-3 py-2 text-sm dark:bg-zinc-900 dark:border-zinc-700 dark:text-gray-100 outline-none focus:border-blue-500"
-      >
-        <option value="all">所有状态</option>
-        <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
+      <UiSelect v-model="selectedStatus">
+        <UiSelectTrigger class="w-[180px]">
+          <UiSelectValue placeholder="选择状态" />
+        </UiSelectTrigger>
+        <UiSelectContent>
+          <UiSelectItem value="all">所有状态</UiSelectItem>
+          <UiSelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </UiSelectItem>
+        </UiSelectContent>
+      </UiSelect>
     </div>
 
     <!-- 工作台主区域 -->
     <div class="flex-1 overflow-auto bg-white dark:bg-zinc-950 rounded-lg shadow-sm border border-gray-100 dark:border-zinc-800">
-      <table class="w-full text-left text-sm text-gray-600 dark:text-gray-300">
-        <thead class="bg-gray-50 dark:bg-zinc-900 text-gray-700 dark:text-gray-200 sticky top-0 z-10 border-b border-gray-200 dark:border-zinc-700">
-          <tr>
-            <th class="px-4 py-3 font-semibold w-64 min-w-[16rem]">词条 Key & 信息</th>
-            <th v-for="lang in targetLanguages" :key="lang.code" class="px-4 py-3 font-semibold min-w-[16rem]">
+      <UiTable>
+        <UiTableHeader class="bg-gray-50 dark:bg-zinc-900 sticky top-0 z-10 border-b border-gray-200 dark:border-zinc-700">
+          <UiTableRow>
+            <UiTableHead class="w-24 text-center">操作</UiTableHead>
+            <UiTableHead class="w-64 min-w-[16rem]">词条 Key & 信息</UiTableHead>
+            <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[16rem]">
               {{ lang.name }} <span class="text-xs font-normal text-gray-400">({{ lang.code }})</span>
-            </th>
-            <th class="px-4 py-3 font-semibold w-24 text-center">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr 
+            </UiTableHead>
+          </UiTableRow>
+        </UiTableHeader>
+        <UiTableBody>
+          <UiTableRow 
             v-for="term in filteredTerms" 
             :key="term.id"
-            class="border-b border-gray-100 dark:border-zinc-800 hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 transition"
+            class="hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 transition border-b border-gray-100 dark:border-zinc-800"
           >
+            <!-- 操作列 -->
+            <UiTableCell class="align-top text-center text-gray-400 p-3">
+              <UiTooltipProvider>
+                <div class="flex flex-col gap-2 items-center">
+                  <UiTooltip>
+                    <UiTooltipTrigger as-child>
+                      <button 
+                        @click="translateRow(term)"
+                        :disabled="translatingTerms.has(term.id)"
+                        class="p-1.5 hover:text-primary hover:bg-primary/10 rounded transition disabled:opacity-50 disabled:cursor-not-allowed text-primary/80"
+                      >
+                        <Loader2 v-if="translatingTerms.has(term.id)" class="w-4 h-4 animate-spin" />
+                        <Wand2 v-else class="w-4 h-4" />
+                      </button>
+                    </UiTooltipTrigger>
+                    <UiTooltipContent side="right">
+                      <p>ai翻译</p>
+                    </UiTooltipContent>
+                  </UiTooltip>
+                  
+                  <UiAlertDialog @update:open="val => presentDeletingId = val ? term.id : null">
+                    <UiTooltip :open="presentDeletingId === term.id ? false : undefined">
+                      <UiTooltipTrigger as-child>
+                        <UiAlertDialogTrigger as-child>
+                          <button 
+                            class="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition"
+                          >
+                            <Trash2 class="w-4 h-4" />
+                          </button>
+                        </UiAlertDialogTrigger>
+                      </UiTooltipTrigger>
+                      <UiTooltipContent side="right">
+                        <p>删除</p>
+                      </UiTooltipContent>
+                    </UiTooltip>
+                    
+                    <UiAlertDialogContent @close-auto-focus="(e) => e.preventDefault()">
+                      <UiAlertDialogHeader>
+                        <UiAlertDialogTitle>确认删除该词条吗？</UiAlertDialogTitle>
+                        <UiAlertDialogDescription>
+                          您正在尝试删除词条 <strong class="text-foreground">{{ term.key }}</strong>。此操作无法撤销，将丢失所有相关的多语言翻译记录。
+                        </UiAlertDialogDescription>
+                      </UiAlertDialogHeader>
+                      <UiAlertDialogFooter>
+                        <UiAlertDialogCancel>取消</UiAlertDialogCancel>
+                        <UiAlertDialogAction class="bg-destructive text-destructive-foreground hover:bg-destructive/90" @click="deleteTerm(term.id)">
+                          确认删除
+                        </UiAlertDialogAction>
+                      </UiAlertDialogFooter>
+                    </UiAlertDialogContent>
+                  </UiAlertDialog>
+                </div>
+              </UiTooltipProvider>
+            </UiTableCell>
+
             <!-- 词条基础信息列 -->
-            <td class="px-4 py-3 align-top">
+            <UiTableCell class="align-top p-3">
               <div class="flex flex-col gap-1.5">
                 <!-- Module -->
                 <div v-if="activeEditKey === term.id + '-module'">
-                  <input 
+                  <UiInput 
                     v-model="term.module" 
                     :ref="focusElement"
                     @blur="stopEdit"
                     @keydown.enter="stopEdit"
-                    class="text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-1.5 py-1 rounded outline-none min-w-[5rem] max-w-full border border-blue-300 dark:border-blue-700 placeholder:text-blue-300 dark:placeholder:text-blue-700 font-medium"
+                    class="h-7 text-xs font-mono text-primary bg-primary/10 px-1.5 py-0 min-w-[5rem] border-primary/30 placeholder:text-primary/50 font-medium"
                     placeholder="模块(可选)"
                   />
                 </div>
                 <div 
                   v-else 
                   @click="startEdit(term.id + '-module')"
-                  class="text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-1.5 py-1 rounded w-max cursor-text hover:ring-1 hover:ring-blue-300 transition-shadow min-h-[24px] flex items-center"
+                  class="text-xs font-mono text-primary bg-primary/10 px-1.5 py-1 rounded w-max cursor-text hover:ring-1 hover:ring-primary/40 transition-shadow min-h-[24px] flex items-center"
                 >
                   {{ term.module || '无模块' }}
                 </div>
@@ -345,19 +476,19 @@ function confirmExport() {
                 <!-- Key -->
                 <div class="flex items-center gap-2">
                   <div v-if="activeEditKey === term.id + '-key'" class="flex-1">
-                    <input 
+                    <UiInput 
                       v-model="term.key"
                       :ref="focusElement"
                       @blur="stopEdit"
                       @keydown.enter="stopEdit"
-                      class="font-semibold text-gray-900 dark:text-gray-100 bg-transparent outline-none border-b border-gray-400 focus:border-blue-500 w-full px-1 py-0.5"
+                      class="h-7 text-sm font-semibold border-b border-t-0 border-l-0 border-r-0 border-gray-400 focus-visible:ring-0 px-1 py-0 shadow-none rounded-none"
                       placeholder="词条键名"
                     />
                   </div>
                   <div 
                     v-else 
                     @click="openDrawer(term)"
-                    class="font-semibold text-blue-600 dark:text-blue-400 cursor-pointer hover:underline px-1 py-0.5 rounded transition-colors break-words min-h-[28px] flex-1 flex items-center"
+                    class="font-semibold text-primary cursor-pointer hover:underline px-1 py-0.5 rounded transition-colors break-words min-h-[28px] flex-1 flex items-center"
                     title="点击打开详情侧边栏"
                   >
                     {{ term.key || '未命名键值' }}
@@ -366,14 +497,13 @@ function confirmExport() {
 
                 <!-- Description -->
                 <div v-if="activeEditKey === term.id + '-desc'">
-                  <textarea 
+                  <UiTextarea 
                     v-model="term.description"
                     :ref="focusElement"
                     @blur="stopEdit"
-                    class="text-xs text-gray-600 dark:text-gray-300 bg-white dark:bg-zinc-950 outline-none resize-none mt-1 w-full border border-blue-400 rounded p-1.5 shadow-sm"
-                    rows="2"
+                    class="text-xs min-h-[40px] resize-none mt-1 w-full p-2 focus-visible:ring-primary/50 border-primary/40"
                     placeholder="添加上下文描述..."
-                  ></textarea>
+                  />
                 </div>
                 <div 
                   v-else 
@@ -384,30 +514,32 @@ function confirmExport() {
                 </div>
                 
                 <div class="mt-1.5 flex items-center gap-1.5 px-1">
-                  <select 
-                    v-model="term.status"
-                    class="text-xs bg-transparent outline-none border rounded border-gray-200 dark:border-zinc-700 px-1 py-0.5 cursor-pointer"
-                  >
-                    <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
-                      {{ opt.label }}
-                    </option>
-                  </select>
+                  <UiSelect v-model="term.status">
+                    <UiSelectTrigger class="w-[90px] h-6 text-xs px-1.5">
+                      <UiSelectValue />
+                    </UiSelectTrigger>
+                    <UiSelectContent class="min-w-[4rem]">
+                      <UiSelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value" class="text-xs">
+                        {{ opt.label }}
+                      </UiSelectItem>
+                    </UiSelectContent>
+                  </UiSelect>
                   <span class="w-2 h-2 rounded-full" :class="getStatusColor(term.status)"></span>
                 </div>
               </div>
-            </td>
+            </UiTableCell>
 
             <!-- 多语言翻译列 -->
-            <td v-for="lang in targetLanguages" :key="lang.code" class="px-4 py-3 align-top group">
+            <UiTableCell v-for="lang in targetLanguages" :key="lang.code" class="align-top group p-3">
               <div class="h-full relative min-h-[5rem]">
                 <div v-if="activeEditKey === term.id + '-' + lang.code" class="h-full">
-                  <textarea 
+                  <UiTextarea 
                     v-model="term.translations[lang.code]"
                     :ref="focusElement"
                     @blur="stopEdit"
-                    class="w-full h-full min-h-[5rem] p-2 bg-white dark:bg-zinc-950 border border-blue-500 rounded-md outline-none resize-y text-sm shadow-sm"
+                    class="w-full h-full min-h-[5rem] p-2 focus-visible:border-primary text-sm shadow-sm"
                     :placeholder="'输入 ' + lang.name + ' 翻译...'"
-                  ></textarea>
+                  />
                 </div>
                 <div 
                   v-else 
@@ -418,136 +550,107 @@ function confirmExport() {
                   {{ term.translations[lang.code] || '空' }}
                 </div>
               </div>
-            </td>
+            </UiTableCell>
 
-            <!-- 操作列 -->
-            <td class="px-4 py-3 align-top text-center text-gray-400">
-              <button 
-                @click="deleteTerm(term.id)"
-                class="p-1.5 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition"
-                title="删除此条词条"
-              >
-                <Trash2 class="w-4 h-4 mx-auto" />
-              </button>
-            </td>
-          </tr>
+          </UiTableRow>
           
-          <tr v-if="filteredTerms.length === 0">
-            <td :colspan="targetLanguages.length + 2" class="px-4 py-12 text-center text-gray-400">
+          <UiTableRow v-if="filteredTerms.length === 0">
+            <UiTableCell :colspan="targetLanguages.length + 2" class="px-4 py-12 text-center text-gray-400 text-sm">
               空空如也，没有找到匹配的词条。
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </UiTableCell>
+          </UiTableRow>
+        </UiTableBody>
+      </UiTable>
     </div>
 
     <!-- 导出语言选择模态框 -->
-    <div v-if="showExportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div class="bg-white dark:bg-zinc-900 w-full max-w-lg rounded-xl shadow-2xl border border-gray-100 dark:border-zinc-800 flex flex-col max-h-[90vh]">
-        <!-- Header -->
-        <div class="flex items-center justify-between p-5 border-b border-gray-100 dark:border-zinc-800">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">选择要导出的语言</h3>
-          <button @click="closeExportModal" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition">
-            <X class="w-5 h-5" />
-          </button>
-        </div>
+    <UiDialog :open="showExportModal" @update:open="val => { if(!val) closeExportModal() }">
+      <UiDialogContent class="sm:max-w-lg">
+        <UiDialogHeader>
+          <UiDialogTitle>选择要导出的语言</UiDialogTitle>
+          <UiDialogDescription>
+            您可以自定义选择需要被导出成独立配置的语言模块。
+          </UiDialogDescription>
+        </UiDialogHeader>
         
         <!-- Content -->
-        <div class="p-5 flex-1 overflow-y-auto">
+        <div class="py-2">
           <div class="flex items-center justify-between mb-4">
             <span class="text-sm text-gray-500 dark:text-gray-400">已选择 {{ selectedExportLangs.length }} / {{ targetLanguages.length }} 项</span>
             <div class="flex gap-2">
-              <button @click="selectAllExportLangs" class="text-xs text-blue-600 dark:text-blue-400 hover:underline">全选</button>
-              <button @click="deselectAllExportLangs" class="text-xs text-gray-500 dark:text-gray-400 hover:underline">取消全选</button>
+              <UiButton variant="link" class="h-auto p-0 text-primary" @click="selectAllExportLangs">全选</UiButton>
+              <UiButton variant="link" class="h-auto p-0 text-muted-foreground" @click="deselectAllExportLangs">取消全选</UiButton>
             </div>
           </div>
           
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div 
-              v-for="lang in targetLanguages" 
-              :key="lang.code"
-              @click="toggleExportLang(lang.code)"
-              class="flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition select-none"
-              :class="selectedExportLangs.includes(lang.code) 
-                ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' 
-                : 'border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-zinc-700'"
-            >
-              <div 
-                class="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-                :class="selectedExportLangs.includes(lang.code) ? 'bg-blue-500 text-white' : 'border-2 border-gray-300 dark:border-zinc-600'"
+          <UiScrollArea class="h-[40vh] pr-4">
+            <div class="grid grid-cols-2 gap-3 pb-4">
+              <div
+                v-for="lang in targetLanguages" 
+                :key="lang.code"
+                class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-accent hover:text-accent-foreground transition select-none"
+                :class="selectedExportLangs.includes(lang.code) ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground'"
+                @click="toggleExportLang(lang.code)"
               >
-                <Check v-if="selectedExportLangs.includes(lang.code)" class="w-3.5 h-3.5" />
-              </div>
-              <div class="flex flex-col min-w-0">
-                <span class="text-sm font-medium truncate">{{ lang.name }}</span>
-                <span class="text-xs opacity-70 truncate">{{ lang.code }}</span>
+                <UiCheckbox 
+                  :model-value="selectedExportLangs.includes(lang.code)" 
+                  class="pointer-events-none shrink-0" 
+                />
+                <div class="flex flex-col min-w-0">
+                  <span class="text-sm font-medium truncate">{{ lang.name }}</span>
+                  <span class="text-xs opacity-70 truncate">{{ lang.code }}</span>
+                </div>
               </div>
             </div>
-          </div>
+          </UiScrollArea>
         </div>
 
-        <!-- Footer -->
-        <div class="flex items-center justify-end gap-3 p-5 border-t border-gray-100 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950/50 rounded-b-xl">
-          <button 
-            @click="closeExportModal"
-            class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition"
-          >
-            取消
-          </button>
-          <button 
-            @click="confirmExport"
-            class="px-4 py-2 text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 rounded-md transition"
-          >
+        <UiDialogFooter>
+          <UiButton variant="outline" @click="closeExportModal">取消</UiButton>
+          <UiButton @click="confirmExport">
             确认导出 ({{ selectedExportLangs.length }})
-          </button>
-        </div>
-      </div>
-    </div>
+          </UiButton>
+        </UiDialogFooter>
+      </UiDialogContent>
+    </UiDialog>
 
     <!-- 侧边栏详情抽屉 (Drawer) -->
-    <div 
-      v-if="isDrawerOpen" 
-      class="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px]" 
-      @click="closeDrawer"
-    ></div>
-    
-    <div 
-      class="fixed top-0 right-0 h-full w-[500px] max-w-full bg-white dark:bg-zinc-900 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 dark:border-zinc-800 flex flex-col"
-      :class="isDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
-    >
-      <div v-if="activeDrawerTerm" class="flex flex-col h-full h-full overflow-hidden">
-        <!-- Drawer Header -->
-        <div class="px-6 py-4 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between shrink-0 bg-gray-50/50 dark:bg-zinc-950/50">
-          <div class="flex items-center gap-3 w-full min-w-0 pr-4">
-            <h2 class="text-lg font-bold truncate text-gray-900 dark:text-gray-100 flex-1 flex items-center gap-2">
-              <span class="text-blue-600 dark:text-blue-400 opacity-60 font-mono font-medium" v-if="activeDrawerTerm.module">{{ activeDrawerTerm.module }}.</span>
-              <span class="truncate">{{ activeDrawerTerm.key }}</span>
-            </h2>
-            <select 
-              v-model="activeDrawerTerm.status"
-              class="text-xs bg-white dark:bg-zinc-900 outline-none border rounded border-gray-200 dark:border-zinc-700 px-2 py-1 cursor-pointer shadow-sm shrink-0"
-            >
-              <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
-                {{ opt.label }}
-              </option>
-            </select>
-          </div>
-          <button @click="closeDrawer" class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition shrink-0 dark:hover:bg-zinc-800">
-            <PanelRightClose class="w-5 h-5" />
-          </button>
-        </div>
+    <UiSheet :open="isDrawerOpen" @update:open="val => { if(!val) closeDrawer() }">
+      <UiSheetContent class="w-[500px] sm:max-w-[500px] p-0 flex flex-col border-l dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+        <div v-if="activeDrawerTerm" class="flex flex-col h-full overflow-hidden">
+          <!-- Drawer Header -->
+          <UiSheetHeader class="px-6 py-4 border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-950/50 space-y-0 text-left">
+            <div class="flex justify-between items-center w-full min-w-0 pr-6 pl-1">
+              <UiSheetTitle class="text-lg font-bold truncate text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span class="text-primary opacity-80 font-mono font-medium" v-if="activeDrawerTerm.module">{{ activeDrawerTerm.module }}.</span>
+                <span class="truncate">{{ activeDrawerTerm.key }}</span>
+              </UiSheetTitle>
+              <UiSelect v-model="activeDrawerTerm.status">
+                <UiSelectTrigger class="w-[110px] h-8 text-xs shrink-0 bg-white dark:bg-zinc-900">
+                  <UiSelectValue />
+                </UiSelectTrigger>
+                <UiSelectContent>
+                  <UiSelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </UiSelectItem>
+                </UiSelectContent>
+              </UiSelect>
+            </div>
+            <UiSheetDescription class="hidden">详情</UiSheetDescription>
+          </UiSheetHeader>
 
-        <!-- Drawer Content (Scrollable) -->
-        <div class="p-6 flex-1 overflow-y-auto space-y-8 bg-white dark:bg-zinc-900">
+          <div class="flex-1 min-h-0">
+            <UiScrollArea class="h-full w-full block">
+              <div class="p-6 space-y-8">
           
           <!-- Section: Context & Description -->
           <div class="space-y-3">
             <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">上下文描述</h3>
-            <textarea 
+            <UiTextarea 
               v-model="activeDrawerTerm.description"
-              class="w-full min-h-[80px] p-3 text-sm bg-gray-50 dark:bg-zinc-950 border border-transparent focus:border-blue-500 rounded-lg outline-none resize-none transition-colors text-gray-600 dark:text-gray-300"
+              class="min-h-[80px]"
               placeholder="添加详细的上下文描述，如出现位置、用途等..."
-            ></textarea>
+            />
             
             <!-- 占位截图区域 -->
             <div class="w-full h-32 border-2 border-dashed border-gray-300 dark:border-zinc-700 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:bg-gray-50 dark:hover:bg-zinc-800 transition cursor-pointer">
@@ -569,11 +672,11 @@ function confirmExport() {
                 <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 flex justify-between">
                   <span>{{ lang.name }} <span class="uppercase text-gray-400 translate-y-px inline-block ml-1">({{ lang.code }})</span></span>
                 </label>
-                <textarea 
+                <UiTextarea 
                   v-model="activeDrawerTerm.translations[lang.code]"
-                  class="w-full min-h-[44px] p-2.5 text-sm bg-white dark:bg-zinc-950 border border-gray-200 dark:border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-md outline-none transition-all shadow-sm resize-y"
+                  class="min-h-[44px]"
                   :placeholder="'输入 ' + lang.name + ' 翻译...'"
-                ></textarea>
+                />
               </div>
             </div>
           </div>
@@ -594,7 +697,7 @@ function confirmExport() {
                 <p class="text-xs text-gray-500 mb-2">最近动态</p>
                 <ul class="space-y-3 relative before:absolute before:inset-y-0 before:left-[5px] before:w-[2px] before:bg-gray-200 dark:before:bg-zinc-800">
                   <li v-for="(log, idx) in activeDrawerTerm.history" :key="idx" class="relative pl-5">
-                    <span class="absolute left-0 top-1.5 w-3 h-3 bg-white dark:bg-zinc-950 border-[2px] border-blue-500 rounded-full z-10"></span>
+                    <span class="absolute left-0 top-1.5 w-3 h-3 bg-white dark:bg-zinc-950 border-[2px] border-primary rounded-full z-10"></span>
                     <div class="flex flex-col text-xs space-y-0.5">
                       <span class="text-gray-900 dark:text-gray-100 font-medium">{{ log.user }} <span class="text-gray-500 font-normal ml-1">{{ log.action }}</span></span>
                       <span class="text-gray-400">{{ log.time }}</span>
@@ -604,8 +707,11 @@ function confirmExport() {
               </div>
             </div>
           </div>
+            </div>
+          </UiScrollArea>
+          </div>
         </div>
-      </div>
-    </div>
+      </UiSheetContent>
+    </UiSheet>
   </div>
 </template>
