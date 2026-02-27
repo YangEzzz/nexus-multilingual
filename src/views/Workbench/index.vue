@@ -168,7 +168,7 @@ ${Object.entries(term.translations).filter(([_, val]) => val).map(([lang, val]) 
 `
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-3-pro-preview',
       contents: prompt,
       config: {
         temperature: 0.2

@@ -4,5 +4,5 @@ import { GoogleGenAI } from '@google/genai';
 // In a real production app, it is highly recommended to proxy these requests through a backend
 // to avoid exposing your API key to the client.
 export const ai = new GoogleGenAI({
-    apiKey: 'AIzaSyCEjLpVAVbeV4MXBwJtO-IREGghUSlh-KU',
+    apiKey: import.meta.env.VITE_GEMINI_API_KEY,
 });
