@@ -213,6 +213,88 @@ ${Object.entries(term.translations).filter(([_, val]) => val).map(([lang, val]) 
   }
 }
 
+const selectedTermIds = ref<string[]>([])
+const isBatchTranslating = ref(false)
+const showBatchDeleteDialog = ref(false)
+
+const isAllSelected = computed(() => {
+  return filteredTerms.value.length > 0 && selectedTermIds.value.length === filteredTerms.value.length
+})
+
+const isIndeterminate = computed(() => {
+  return selectedTermIds.value.length > 0 && selectedTermIds.value.length < filteredTerms.value.length
+})
+
+const checkboxAllState = computed({
+  get() {
+    if (isAllSelected.value) return true
+    if (isIndeterminate.value) return 'indeterminate'
+    return false
+  },
+  set(val) {
+    if (val === true) {
+      selectedTermIds.value = filteredTerms.value.map(t => t.id)
+    } else {
+      selectedTermIds.value = []
+    }
+  }
+})
+
+function toggleSelectTerm(id: string, checked: boolean | 'indeterminate') {
+  if (checked === true) {
+    selectedTermIds.value.push(id)
+  } else {
+    selectedTermIds.value = selectedTermIds.value.filter(i => i !== id)
+  }
+}
+
+async function batchTranslate() {
+  if (selectedTermIds.value.length === 0) return
+  isBatchTranslating.value = true
+  let successCount = 0
+  let failCount = 0
+
+  // 并发请求数量控制 (控制在3个以内避免超出 AI API 频率限制)
+  const batchSize = 3
+  for (let i = 0; i < selectedTermIds.value.length; i += batchSize) {
+    const batchList = selectedTermIds.value.slice(i, i + batchSize)
+    const promises = batchList.map(async (id) => {
+      const term = terms.value.find(t => t.id === id)
+      if (term) {
+        try {
+          await translateRow(term)
+          successCount++
+        } catch (error) {
+          failCount++
+        }
+      }
+    })
+    await Promise.all(promises)
+  }
+
+  isBatchTranslating.value = false
+  
+  if (failCount > 0) {
+    toast.warning('批量翻译完成', {
+      description: `成功: ${successCount}，失败: ${failCount}。可能是 AI 响应超时或由于并发限制导致。`
+    })
+  } else {
+    toast.success('批量翻译成功', {
+      description: `已成功为您翻译了 ${successCount} 个选中的词条。`
+    })
+  }
+}
+
+function confirmBatchDelete() {
+  const count = selectedTermIds.value.length
+  terms.value = terms.value.filter(t => !selectedTermIds.value.includes(t.id))
+  selectedTermIds.value = []
+  showBatchDeleteDialog.value = false
+  toast.success('批量删除成功', {
+    description: `已删除 ${count} 个词条。`
+  })
+}
+
 const activeEditKey = ref<string | null>(null)
 
 function startEdit(key: string) {
@@ -366,40 +448,59 @@ function confirmExport() {
       </div>
     </div>
 
-    <!-- 顶栏过滤器 -->
-    <div class="flex gap-4 p-4 bg-white dark:bg-zinc-950 rounded-lg shadow-sm border border-gray-100 dark:border-zinc-800">
-      <div class="flex-1 relative">
-        <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <UiInput 
-          v-model="searchQuery" 
-          placeholder="搜索 Keyword... (例如 confirm)"
-          class="pl-9"
-        />
-      </div>
-      
-      <UiSelect v-model="selectedModule">
-        <UiSelectTrigger class="w-[180px]">
-          <UiSelectValue placeholder="选择模块" />
-        </UiSelectTrigger>
-        <UiSelectContent>
-          <UiSelectItem value="all">所有模块</UiSelectItem>
-          <UiSelectItem v-for="mod in modules" :key="mod" :value="mod === '' ? '__none__' : mod">
-            {{ mod === '' ? '(无模块)' : mod }}
-          </UiSelectItem>
-        </UiSelectContent>
-      </UiSelect>
+    <!-- 顶栏过滤器和批量操作栏 -->
+    <div class="flex flex-col gap-4 p-4 bg-white dark:bg-zinc-950 rounded-lg shadow-sm border border-gray-100 dark:border-zinc-800">
+      <div class="flex gap-4">
+        <div class="flex-1 relative">
+          <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <UiInput 
+            v-model="searchQuery" 
+            placeholder="搜索 Keyword... (例如 confirm)"
+            class="pl-9"
+          />
+        </div>
+        
+        <UiSelect v-model="selectedModule">
+          <UiSelectTrigger class="w-[180px]">
+            <UiSelectValue placeholder="选择模块" />
+          </UiSelectTrigger>
+          <UiSelectContent>
+            <UiSelectItem value="all">所有模块</UiSelectItem>
+            <UiSelectItem v-for="mod in modules" :key="mod" :value="mod === '' ? '__none__' : mod">
+              {{ mod === '' ? '(无模块)' : mod }}
+            </UiSelectItem>
+          </UiSelectContent>
+        </UiSelect>
 
-      <UiSelect v-model="selectedStatus">
-        <UiSelectTrigger class="w-[180px]">
-          <UiSelectValue placeholder="选择状态" />
-        </UiSelectTrigger>
-        <UiSelectContent>
-          <UiSelectItem value="all">所有状态</UiSelectItem>
-          <UiSelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </UiSelectItem>
-        </UiSelectContent>
-      </UiSelect>
+        <UiSelect v-model="selectedStatus">
+          <UiSelectTrigger class="w-[180px]">
+            <UiSelectValue placeholder="选择状态" />
+          </UiSelectTrigger>
+          <UiSelectContent>
+            <UiSelectItem value="all">所有状态</UiSelectItem>
+            <UiSelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </UiSelectItem>
+          </UiSelectContent>
+        </UiSelect>
+      </div>
+
+      <!-- 批量操作栏 -->
+      <div v-if="selectedTermIds.length > 0" class="flex justify-between items-center py-2 px-3 bg-primary/5 border border-primary/20 rounded-md">
+        <div class="text-sm text-primary font-medium">已选中 {{ selectedTermIds.length }} 项的批处理</div>
+        <div class="flex gap-2">
+          <UiButton variant="outline" size="sm" @click="selectedTermIds = []">取消选中</UiButton>
+          <UiButton variant="default" size="sm" @click="batchTranslate" :disabled="isBatchTranslating">
+            <Loader2 v-if="isBatchTranslating" class="w-4 h-4 mr-1 animate-spin" />
+            <Wand2 v-else class="w-4 h-4 mr-1" />
+            批量 AI 翻译
+          </UiButton>
+          <UiButton variant="destructive" size="sm" @click="showBatchDeleteDialog = true">
+            <Trash2 class="w-4 h-4 mr-1" />
+            批量删除
+          </UiButton>
+        </div>
+      </div>
     </div>
 
     <!-- 工作台主区域 -->
@@ -407,6 +508,12 @@ function confirmExport() {
       <UiTable>
         <UiTableHeader class="bg-gray-50 dark:bg-zinc-900 sticky top-0 z-10 border-b border-gray-200 dark:border-zinc-700">
           <UiTableRow>
+            <UiTableHead class="w-10 text-center px-3">
+              <UiCheckbox 
+                :checked="checkboxAllState"
+                @update:checked="(val: any) => checkboxAllState = val"
+              />
+            </UiTableHead>
             <UiTableHead class="w-24 text-center">操作</UiTableHead>
             <UiTableHead class="w-64 min-w-[16rem]">词条 Key & 信息</UiTableHead>
             <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[16rem]">
@@ -419,7 +526,16 @@ function confirmExport() {
             v-for="term in filteredTerms" 
             :key="term.id"
             class="hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 transition border-b border-gray-100 dark:border-zinc-800"
+            :class="{ 'bg-primary/5 dark:bg-primary/10 hover:bg-primary/10 dark:hover:bg-primary/15': selectedTermIds.includes(term.id) }"
           >
+            <!-- 多选列 -->
+            <UiTableCell class="align-top text-center px-3 py-4">
+              <UiCheckbox 
+                :checked="selectedTermIds.includes(term.id)"
+                @update:checked="toggleSelectTerm(term.id, $event)"
+              />
+            </UiTableCell>
+            
             <!-- 操作列 -->
             <UiTableCell class="align-top text-center text-gray-400 p-3">
               <UiTooltipProvider>
@@ -737,5 +853,21 @@ function confirmExport() {
         </div>
       </UiSheetContent>
     </UiSheet>
+    <!-- 批量删除确认模态框 -->
+    <UiAlertDialog :open="showBatchDeleteDialog" @update:open="val => showBatchDeleteDialog = val">
+      <UiAlertDialogContent>
+        <UiAlertDialogHeader>
+          <UiAlertDialogTitle>确认批量删除？</UiAlertDialogTitle>
+          <UiAlertDialogDescription>
+            您即将删除选中的 <strong class="text-foreground">{{ selectedTermIds.length }}</strong> 个词条。此操作不可恢复，是否继续？
+          </UiAlertDialogDescription>
+        </UiAlertDialogHeader>
+        <UiAlertDialogFooter>
+          <UiAlertDialogCancel>取消</UiAlertDialogCancel>
+          <UiAlertDialogAction class="bg-destructive text-destructive-foreground hover:bg-destructive/90" @click="confirmBatchDelete">确认删除</UiAlertDialogAction>
+        </UiAlertDialogFooter>
+      </UiAlertDialogContent>
+    </UiAlertDialog>
+    
   </div>
 </template>
