@@ -12,7 +12,7 @@ export const useThemeStore = defineStore('system-config', () => {
     theme.value = newTheme
   }
 
-  const contentLayout = ref<ContentLayout>('centered')
+  const contentLayout = ref<ContentLayout>('full')
   const setContentLayout = (newContentLayout: ContentLayout) => {
     contentLayout.value = newContentLayout
   }
