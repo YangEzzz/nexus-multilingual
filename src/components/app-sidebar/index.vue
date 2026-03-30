@@ -1,8 +1,13 @@
 <script lang="ts" setup>
+import { storeToRefs } from 'pinia'
+import { useAuthStore } from '@/store'
 import { sidebarData } from './data/sidebar-data'
 import NavFooter from './nav-footer.vue'
 import NavTeam from './nav-team.vue'
 import TeamSwitcher from './team-switcher.vue'
+
+const authStore = useAuthStore()
+const { user } = storeToRefs(authStore)
 </script>
 
 <template>
@@ -16,7 +21,7 @@ import TeamSwitcher from './team-switcher.vue'
     </UiSidebarContent>
 
     <UiSidebarFooter>
-      <NavFooter :user="sidebarData.user" />
+      <NavFooter :user="user || sidebarData.user" />
     </UiSidebarFooter>
 
     <UiSidebarRail />

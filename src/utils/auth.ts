@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'auth_token'
+const TOKEN_KEY = 'nexus_token'
 
 /**
  * 设置认证token

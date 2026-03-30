@@ -32,6 +32,16 @@ const baseRoutes: RouteRecordRaw[] = [
         name: 'workbench',
         component: () => import('@/views/Workbench/index.vue'),
       },
+      {
+        path: '/projects',
+        name: 'projects',
+        component: () => import('@/views/Projects/index.vue'),
+      },
+      {
+        path: '/project-logs',
+        name: 'project-logs',
+        component: () => import('@/views/Workbench/Logs.vue'),
+      },
     ],
   },
   // Auth routes - 认证相关路由
@@ -97,6 +107,9 @@ const baseRoutes: RouteRecordRaw[] = [
     ],
   },
 ]
+import { isLoggedIn } from '@/utils/auth'
+
+const publicRoutes = ['/auth/sign-in', '/auth/sign-in-2', '/auth/sign-up', '/auth/forgot-password', '/auth/otp', '/errors/401', '/errors/403', '/errors/404', '/errors/500', '/errors/503']
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.VITE_APP_PUBLIC_PATH),
@@ -107,66 +120,28 @@ const router = createRouter({
 })
 
 // 全局前置守卫
-// router.beforeEach(async (to, _, next) => {
-//   // 检查当前路由是否为公共路由
-//   const isPublicRoute = publicRoutes.includes(to.path)
-//
-//   // 如果用户已登录但动态路由尚未初始化
-//   if (isLoggedIn() && !hasInitRoutes) {
-//     try {
-//       // 获取权限store
-//       // const permissionStore = await initStore()
-//       //
-//       // // 获取用户菜单
-//       // const response = await fetchUserMenus()
-//       //
-//       // if (response.code === 200 && response.data) {
-//       //   // 设置菜单数据
-//       //   permissionStore.setMenus(response.data)
-//       //
-//       //   // 生成并添加动态路由
-//       //   permissionStore.addRoutes()
-//       //
-//       //   // 标记路由已初始化
-//       //   hasInitRoutes = true
-//       //
-//       //   // 如果访问的是根路径，重定向到首页
-//       //   if (to.path === '/') {
-//       //     next({ path: '/dashboard', replace: true })
-//       //   } else {
-//       //     // 重定向到目标页面，确保新路由能够被正确匹配
-//       //     next({ ...to, replace: true })
-//       //   }
-//       //   return
-//       // }
-//     }
-//     catch (error) {
-//       console.error('初始化路由失败:', error)
-//     }
-//   }
-//
-//   // 如果不是公共路由且用户未登录，则重定向到登录页
-//   if (!isPublicRoute && !isLoggedIn()) {
-//     next({
-//       path: '/login',
-//       query: { redirect: to.fullPath }, // 保存原目标路径，以便登录后重定向
-//     })
-//   }
-//   else if ((to.path === '/login' || to.path === '/register') && isLoggedIn()) {
-//     // 如果用户已登录但访问登录或注册页，则重定向到首页
-//     next({ path: '/' })
-//   }
-//   else {
-//     // 其他情况正常放行
-//     next()
-//   }
-// })
+router.beforeEach(async (to, _, next) => {
+  // 检查当前路径是否在公共路由中 (或者是 auth 或者 errors 目录下的均放行)
+  const isPublicRoute = publicRoutes.includes(to.path) || to.path.startsWith('/auth/') || to.path.startsWith('/errors/')
+
+  if (!isPublicRoute && !isLoggedIn()) {
+    // 还没登录且不属于公共路由，强制跳回登录
+    next({
+      path: '/auth/sign-in',
+      query: { redirect: to.fullPath }, // 保存原目标路径，以便登录后重定向
+    })
+  } else if (to.path.startsWith('/auth/') && isLoggedIn()) {
+    // 已经登录的情况下，又跑回登录页/认证页的话，重定向到首页
+    next({ path: '/' })
+  } else {
+    // 正常放行
+    next()
+  }
+})
 
 // 清除路由和登出时重置路由状态
 export const resetRouter = async () => {
-  // const permissionStore = await initStore()
-  // permissionStore.resetRoutes()
-  // hasInitRoutes = false
+  // TODO: 如果使用了动态路由，可以在这里执行清理逻辑
 }
 
 export default router

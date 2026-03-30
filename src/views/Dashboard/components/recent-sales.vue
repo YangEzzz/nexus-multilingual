@@ -22,7 +22,7 @@ const list = ref<User[]>([
     <div v-for="item in list" :key="item.name" class="flex items-center gap-4">
       <Avatar class-name="h-9 w-9">
         <AvatarImage :src="item.avatar" alt="Avatar" />
-        <AvatarFallback>{{ item.name[0].toUpperCase() }}</AvatarFallback>
+        <AvatarFallback>{{ item.name.charAt(0).toUpperCase() }}</AvatarFallback>
       </Avatar>
       <div class="flex flex-wrap items-center justify-between flex-1">
         <div class="space-y-1">

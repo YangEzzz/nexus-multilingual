@@ -39,7 +39,11 @@ const { contentLayout } = storeToRefs(themeStore)
           contentLayout === 'centered' ? 'container mx-auto ' : '',
         )"
       >
-        <router-view />
+        <router-view v-slot="{ Component, route }">
+          <keep-alive :include="['dashboard', 'workbench', 'projects', 'project-logs']">
+            <component :is="Component" :key="route.fullPath" />
+          </keep-alive>
+        </router-view>
       </div>
     </SidebarInset>
   </SidebarProvider>

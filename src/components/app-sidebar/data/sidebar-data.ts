@@ -9,9 +9,9 @@ import {
 import { useSidebar } from '@/composables/use-sidebar'
 
 const user: User = {
-  name: 'shadcn',
-  email: 'm@example.com',
-  avatar: '/avatars/shadcn.jpg',
+  name: 'User',
+  email: '',
+  avatar: '',
 }
 
 const teams: Team[] = [

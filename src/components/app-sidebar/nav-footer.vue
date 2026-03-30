@@ -1,14 +1,8 @@
 <script setup lang="ts">
-import type { User } from './types'
-
 import {
-  BadgeCheck,
-  Bell,
-  ChevronsUpDown,
-  CreditCard,
   LogOut,
-  Sparkles,
   UserRoundCog,
+  ChevronsUpDown,
 } from 'lucide-vue-next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -22,10 +16,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar'
+import { useAuth } from '@/composables/use-auth'
 
-const { user } = defineProps<
-  { user: User }
->()
+const { user } = defineProps<{
+  user: {
+    nickname?: string
+    avatar?: string
+    role?: string
+    name?: string
+    email?: string
+  }
+}>()
 
 const { logout } = useAuth()
 const { isMobile, open } = useSidebar()
@@ -41,16 +42,16 @@ const { isMobile, open } = useSidebar()
             class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
             <Avatar class="size-8 rounded-lg">
-              <AvatarImage :src="user.avatar" :alt="user.name" />
-              <AvatarFallback class="rounded-lg">
-                CN
+              <AvatarImage :src="user.avatar || ''" :alt="user.nickname || user.name" />
+              <AvatarFallback class="rounded-lg bg-primary text-primary-foreground font-bold">
+                {{ (user.nickname || user.name || 'U').charAt(0).toUpperCase() }}
               </AvatarFallback>
             </Avatar>
             <div class="grid flex-1 text-sm leading-tight text-left">
-              <span class="font-semibold truncate">{{ user.name }}</span>
-              <span class="text-xs truncate">{{ user.email }}</span>
+              <span class="font-semibold truncate">{{ user.nickname || user.name }}</span>
+              <span class="text-xs truncate text-muted-foreground">{{ user.role || 'Member' }}</span>
             </div>
-            <ChevronsUpDown class="ml-auto size-4" />
+            <ChevronsUpDown class="ml-auto size-4 opacity-50 transition-opacity group-hover:opacity-100" />
           </SidebarMenuButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -62,54 +63,38 @@ const { isMobile, open } = useSidebar()
           <DropdownMenuLabel class="p-0 font-normal">
             <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
               <Avatar class="size-8 rounded-lg">
-                <AvatarImage :src="user.avatar" :alt="user.name" />
-                <AvatarFallback class="rounded-lg">
-                  CN
+                <AvatarImage :src="user.avatar || ''" :alt="user.nickname || user.name" />
+                <AvatarFallback class="rounded-lg bg-primary text-primary-foreground font-bold text-[10px]">
+                  {{ (user.nickname || user.name || 'U').charAt(0).toUpperCase() }}
                 </AvatarFallback>
               </Avatar>
               <div class="grid flex-1 text-sm leading-tight text-left">
-                <span class="font-semibold truncate">{{ user.name }}</span>
-                <span class="text-xs truncate">{{ user.email }}</span>
+                <span class="font-semibold truncate">{{ user.nickname || user.name }}</span>
+                <span class="text-xs truncate text-muted-foreground">{{ user.role || 'Member' }}</span>
               </div>
             </div>
           </DropdownMenuLabel>
 
           <DropdownMenuSeparator />
+          
           <DropdownMenuGroup>
-            <DropdownMenuItem @click="$router.push('/billing/')">
-              <Sparkles />
-              Upgrade to Pro
+            <DropdownMenuItem 
+              class="cursor-pointer transition-colors focus:bg-sidebar-accent" 
+              @click="$router.push('/settings/')"
+            >
+              <UserRoundCog class="size-4 mr-2" />
+              Profile Settings
             </DropdownMenuItem>
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem @click="$router.push('/billing?type=billing')">
-              <CreditCard />
-              Billing
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem @click="$router.push('/settings/')">
-              <UserRoundCog />
-              Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem @click="$router.push('/settings/account')">
-              <BadgeCheck />
-              Account
-            </DropdownMenuItem>
-            <DropdownMenuItem @click="$router.push('/settings/notifications')">
-              <Bell />
-              Notifications
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-
-          <DropdownMenuSeparator />
-          <DropdownMenuItem @click="logout">
-            <LogOut />
-            Log out
+          
+          <DropdownMenuItem 
+            class="cursor-pointer transition-colors focus:bg-destructive focus:text-destructive-foreground" 
+            @click="logout"
+          >
+            <LogOut class="size-4 mr-2" />
+            Sign Out
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

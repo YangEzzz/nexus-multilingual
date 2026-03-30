@@ -2,12 +2,11 @@ import type { AxiosError } from 'axios'
 
 import axios from 'axios'
 
-import env from '@/utils/env'
-
 export function useAxios() {
+  const env = import.meta.env
   const axiosInstance = axios.create({
-    baseURL: env.VITE_SERVER_API_URL + env.VITE_SERVER_API_PREFIX,
-    timeout: env.VITE_SERVER_API_TIMEOUT,
+    baseURL: `${env.VITE_APP_API_BASE_URL || ''}`,
+    timeout: Number(env.VITE_SERVER_API_TIMEOUT) || 10000,
   })
 
   axiosInstance.interceptors.request.use((config) => {

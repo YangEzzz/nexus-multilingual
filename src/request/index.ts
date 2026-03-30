@@ -43,7 +43,7 @@ const errorHandler = (error: RequestError): Promise<never> => {
     case 401:
       // 未授权，可以跳转到登录页
       removeToken()
-      router.push('/login')
+      router.push('/auth/sign-in')
       console.error('未授权，请重新登录')
       break
     case 403:
@@ -144,13 +144,12 @@ export const api = {
     })
   },
 
-  delete: <T>(option: AxiosRequestConfig): Promise<ResponseData<T>> => {
+  /* delete: <T>(option: AxiosRequestConfig): Promise<ResponseData<T>> => {
     return request({ method: 'DELETE', ...option })
   },
-
   put: <T>(option: AxiosRequestConfig): Promise<ResponseData<T>> => {
     return request({ method: 'PUT', ...option })
-  },
+  }, */
 
   download: (option: AxiosRequestConfig): Promise<Blob> => {
     return request({

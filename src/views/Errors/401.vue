@@ -11,8 +11,3 @@ import Error from '@/components/custom-error.vue'
     />
   </div>
 </template>
-
-<route lang="yaml">
-meta:
-  layout: blank
-</route>

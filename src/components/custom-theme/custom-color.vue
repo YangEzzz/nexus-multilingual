@@ -33,7 +33,7 @@ watchEffect(() => {
           }"
           class="size-2 rounded-full bg-(--theme-primary)"
         />
-        <span class="text-xs">{{ theme.theme[0].toUpperCase() }}{{ theme.theme.slice(1) }}</span>
+        <span class="text-xs">{{ theme.theme.charAt(0).toUpperCase() }}{{ theme.theme.slice(1) }}</span>
       </UiButton>
     </div>
   </div>

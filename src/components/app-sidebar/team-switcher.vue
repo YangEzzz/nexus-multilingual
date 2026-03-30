@@ -24,7 +24,7 @@ const { teams } = defineProps<{
 
 const { isMobile, open } = useSidebar()
 
-const activeTeam = ref<Team>(teams[0])
+const activeTeam = ref<Team | null>(teams[0] ?? null)
 function setActiveTeam(team: Team) {
   activeTeam.value = team
 }
@@ -56,11 +56,11 @@ function handleSelect(command: TComponent) {
               <div
                 class="flex items-center justify-center rounded-lg aspect-square size-8 bg-sidebar-primary text-sidebar-primary-foreground"
               >
-                <component :is="activeTeam.logo" class="size-4" />
+                <component :is="activeTeam?.logo" class="size-4" />
               </div>
               <div class="grid flex-1 text-sm leading-tight text-left">
-                <span class="font-semibold truncate">{{ activeTeam.name }}</span>
-                <span class="text-xs truncate">{{ activeTeam.plan }}</span>
+                <span class="font-semibold truncate">{{ activeTeam?.name ?? 'Workspace' }}</span>
+                <span class="text-xs truncate">{{ activeTeam?.plan ?? 'Default' }}</span>
               </div>
               <ChevronsUpDown class="ml-auto" />
             </SidebarMenuButton>
