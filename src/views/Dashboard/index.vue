@@ -138,7 +138,7 @@ const statCards = computed(() => {
       border: 'border-emerald-200/70 dark:border-emerald-900/50',
     },
     {
-      label: '待审查',
+      label: '待校对',
       value: currentStats.review,
       hint: `${focus.value?.terms_ready_for_review ?? 0} 条可处理`,
       icon: AlertCircle,
@@ -365,8 +365,8 @@ onMounted(loadProjects)
             <div class="mt-5 space-y-3">
               <div class="flex items-start justify-between rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4 dark:border-sky-950 dark:bg-sky-950/20">
                 <div>
-                  <div class="text-sm font-medium text-sky-700 dark:text-sky-300">优先审查</div>
-                  <p class="mt-1 text-xs text-sky-700/80 dark:text-sky-300/80">已补全翻译、可以进入 review 的词条</p>
+                  <div class="text-sm font-medium text-sky-700 dark:text-sky-300">优先校对</div>
+                  <p class="mt-1 text-xs text-sky-700/80 dark:text-sky-300/80">已补全翻译、可以校对通过的词条</p>
                 </div>
                 <div class="text-2xl font-semibold text-sky-700 dark:text-sky-300">{{ focus.terms_ready_for_review }}</div>
               </div>
@@ -557,7 +557,7 @@ onMounted(loadProjects)
                   </div>
                   <div class="min-w-0 flex-1">
                     <div class="font-medium">打开工作台</div>
-                    <div class="text-xs text-muted-foreground">继续翻译、审查或发布词条</div>
+                    <div class="text-xs text-muted-foreground">继续翻译、校对或发布词条</div>
                   </div>
                   <ArrowRight class="size-4 text-muted-foreground" />
                 </button>

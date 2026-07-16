@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="16" fill="#101827"/>
+  <path d="M18 42V22h6.2L39.8 42H46V22" stroke="#F8FAFC" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M17 22h30" stroke="#38BDF8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M17 42h30" stroke="#34D399" stroke-width="3" stroke-linecap="round"/>
+  <path d="M32 12a20 20 0 0 1 20 20M32 52a20 20 0 0 1-20-20" stroke="#64748B" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 5"/>
+  <circle cx="15" cy="20" r="7" fill="#38BDF8"/>
+  <circle cx="49" cy="44" r="7" fill="#34D399"/>
+  <text x="15" y="23" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="8" font-weight="800" fill="#082F49">中</text>
+  <text x="49" y="47" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="7" font-weight="800" fill="#052E16">EN</text>
+</svg>

@@ -2,19 +2,16 @@
 import { ref } from 'vue'
 import { useAuth } from '@/composables/use-auth'
 
-import PrivacyPolicyButton from './PrivacyPolicyButton.vue'
-import TermsOfServiceButton from './TermsOfServiceButton.vue'
-
 const { login, loading } = useAuth()
 
 const formData = ref({
-  username: '',
+  email: '',
   password: '',
   project_id_string: 'nexus-multilingual'
 })
 
 const handleLogin = async () => {
-  if (!formData.value.username || !formData.value.password) {
+  if (!formData.value.email || !formData.value.password) {
     // Basic validation, ideally use vee-validate if this project prefers
     return
   }
@@ -23,30 +20,31 @@ const handleLogin = async () => {
 </script>
 
 <template>
-  <UiCard class="w-full max-w-sm border-0 shadow-lg dark:bg-zinc-950/50 backdrop-blur-sm">
+  <UiCard class="w-full border shadow-lg dark:bg-zinc-950/50 backdrop-blur-sm">
     <UiCardHeader class="space-y-2 text-center">
-      <UiCardTitle class="text-3xl font-semibold tracking-tight">
-        Welcome Back
+      <UiCardTitle class="text-2xl font-semibold tracking-tight">
+        登录账号
       </UiCardTitle>
       <UiCardDescription class="text-muted-foreground">
-        Log into your workspace via the central management system.
+        使用 Helios 账号登录多语言工作台
       </UiCardDescription>
     </UiCardHeader>
     <UiCardContent class="grid gap-6">
       <form @submit.prevent="handleLogin" class="grid gap-4">
         <div class="grid gap-2">
-          <UiLabel for="username">Username</UiLabel>
+          <UiLabel for="email">邮箱</UiLabel>
           <UiInput 
-            id="username" 
-            v-model="formData.username" 
-            placeholder="Enter your username" 
+            id="email" 
+            v-model="formData.email" 
+            type="email"
+            placeholder="请输入邮箱" 
             required 
             class="transition-all duration-200 focus-visible:ring-2"
           />
         </div>
         <div class="grid gap-2">
           <div class="flex items-center justify-between">
-            <UiLabel for="password">Password</UiLabel>
+            <UiLabel for="password">密码</UiLabel>
           </div>
           <UiInput 
             id="password" 
@@ -60,16 +58,9 @@ const handleLogin = async () => {
 
         <UiButton type="submit" class="w-full mt-2 transition-all hover:scale-[1.02] active:scale-[0.98]" :disabled="loading">
           <UiSpinner v-if="loading" class="mr-2 h-4 w-4" />
-          {{ loading ? 'Authenticating...' : 'Sign In' }}
+          {{ loading ? '登录中...' : '登录' }}
         </UiButton>
       </form>
-
-      <UiCardDescription class="text-center text-xs mt-4">
-        By clicking login, you agree to our
-        <TermsOfServiceButton />
-        and
-        <PrivacyPolicyButton />
-      </UiCardDescription>
     </UiCardContent>
   </UiCard>
 </template>
