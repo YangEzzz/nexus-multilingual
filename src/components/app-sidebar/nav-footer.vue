@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {
+  ChevronsUpDown,
   LogOut,
   UserRoundCog,
-  ChevronsUpDown,
 } from 'lucide-vue-next'
 
+import ThemePopover from '@/components/custom-theme/theme-popover.vue'
+import ToggleTheme from '@/components/toggle-theme.vue'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -33,6 +35,14 @@ const { isMobile, open } = useSidebar()
 </script>
 
 <template>
+  <div class="flex min-h-10 items-center justify-between gap-3 px-2">
+    <span class="text-xs font-medium text-muted-foreground">外观设置</span>
+    <div class="flex shrink-0 items-center gap-1">
+      <ToggleTheme />
+      <ThemePopover />
+    </div>
+  </div>
+
   <SidebarMenu>
     <SidebarMenuItem>
       <DropdownMenu>
@@ -76,25 +86,25 @@ const { isMobile, open } = useSidebar()
           </DropdownMenuLabel>
 
           <DropdownMenuSeparator />
-          
+
           <DropdownMenuGroup>
-            <DropdownMenuItem 
-              class="cursor-pointer transition-colors focus:bg-sidebar-accent" 
+            <DropdownMenuItem
+              class="cursor-pointer transition-colors focus:bg-sidebar-accent"
               @click="$router.push('/settings/')"
             >
               <UserRoundCog class="size-4 mr-2" />
-              Profile Settings
+              个人设置
             </DropdownMenuItem>
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
-          
-          <DropdownMenuItem 
-            class="cursor-pointer transition-colors focus:bg-destructive focus:text-destructive-foreground" 
+
+          <DropdownMenuItem
+            class="cursor-pointer transition-colors focus:bg-destructive focus:text-destructive-foreground"
             @click="logout"
           >
             <LogOut class="size-4 mr-2" />
-            Sign Out
+            退出登录
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

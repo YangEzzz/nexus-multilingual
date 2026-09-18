@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 defineOptions({ name: 'workbench' })
 
-import { Download, Plus, Trash2, Search, CalendarDays, Wand2, Loader2, Upload, Copy, X, ListPlus, Edit3, Save, RotateCcw, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle2, Activity, FolderKanban, MoreHorizontal } from 'lucide-vue-next'
+import { Download, Plus, Trash2, Search, CalendarDays, Wand2, Loader2, Upload, Copy, X, ListPlus, Edit3, Save, RotateCcw, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle2, Activity, FolderKanban, Wrench } from 'lucide-vue-next'
 import { api } from '@/request'
 import { useAuthStore } from '@/store/auth'
 import { ai } from '@/lib/gemini'
+import { fetchAvailableLanguages } from '@/lib/available-languages'
 import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
 import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from '@/constants/pagination'
 import { toast } from 'vue-sonner'
@@ -30,35 +31,23 @@ interface TermItem {
   history?: Array<{ time: string; action: string; user: string }>;
 }
 
+interface BatchCreateRow {
+  clientId: string
+  key: string
+  module: string
+  description: string
+  sourceText: string
+}
+
 interface Language {
   code: string;
   name: string;
   is_source?: boolean;
 }
 
-// All possible languages — used as reference for validation, JSON import, etc.
-const ALL_LANGUAGES: Language[] = [
-  { code: 'cn', name: '简体中文' },
-  { code: 'cht', name: '繁体中文' },
-  { code: 'en', name: '英文' },
-  { code: 'jp', name: '日语' },
-  { code: 'pt', name: '葡萄牙语' },
-  { code: 'es', name: '西班牙语' },
-  { code: 'ru', name: '俄语' },
-  { code: 'de', name: '德语' },
-  { code: 'fr', name: '法语' },
-  { code: 'ko', name: '韩语' },
-  { code: 'th', name: '泰语' },
-  { code: 'vi', name: '越南语' },
-  { code: 'ind', name: '印尼语' },
-  { code: 'tr', name: '土耳其语' },
-  { code: 'bn', name: '孟加拉语' },
-  { code: 'pl', name: '波兰语' },
-  { code: 'it', name: '意大利语' },
-]
-
 // Only languages configured for this project; drives table columns
 const targetLanguages = ref<Language[]>([])
+const availableLanguages = ref<Language[]>([])
 
 const sourceLanguageCode = computed(() => {
   return targetLanguages.value.find(lang => lang.is_source)?.code
@@ -183,10 +172,20 @@ async function loadProjectLanguages() {
     if (res.code === 200 && res.data?.length) {
       targetLanguages.value = res.data.map((l: any) => ({ code: l.code, name: l.name, is_source: l.is_source }))
     } else {
-      targetLanguages.value = ALL_LANGUAGES
+      targetLanguages.value = availableLanguages.value
     }
   } catch {
-    targetLanguages.value = ALL_LANGUAGES
+    targetLanguages.value = availableLanguages.value
+  }
+}
+
+async function loadAvailableLanguages() {
+  try {
+    availableLanguages.value = (await fetchAvailableLanguages()).map(lang => ({ code: lang.code, name: lang.name }))
+  }
+  catch (error) {
+    console.error('Failed to load available languages', error)
+    availableLanguages.value = []
   }
 }
 
@@ -245,6 +244,7 @@ async function loadProjectDetails() {
 async function refreshData() {
   if (!projectId.value) return
   loadingTerms.value = true
+  await loadAvailableLanguages()
   await Promise.all([
     loadProjectLanguages(),
     loadTerms(),
@@ -336,6 +336,47 @@ const selectedModule = ref('all')
 const selectedStatus = ref('all')
 const currentPage = ref(1)
 const pageSize = ref<number>(DEFAULT_PAGE_SIZE)
+
+const currentProject = computed(() => projects.value.find(project => String(project.id) === projectId.value))
+const visibleTerms = computed(() => terms.value.filter(term => !isTranslator.value || term.status !== 'draft'))
+const publishedTermCount = computed(() => visibleTerms.value.filter(term => term.status === 'published').length)
+const pendingTermCount = computed(() => visibleTerms.value.filter(term => term.status === 'pending').length)
+const readyTermCount = computed(() => visibleTerms.value.filter(isReadyForReview).length)
+const publishedRate = computed(() => visibleTerms.value.length
+  ? Math.round((publishedTermCount.value / visibleTerms.value.length) * 100)
+  : 0)
+const hasActiveFilters = computed(() => Boolean(
+  searchQuery.value.trim()
+  || chineseSearchQuery.value.trim()
+  || englishSearchQuery.value.trim()
+  || selectedModule.value !== 'all'
+  || selectedStatus.value !== 'all',
+))
+
+watch(currentProject, (project) => {
+  document.title = project?.name
+    ? `词条工作台：${project.name} — Nexus Multilingual`
+    : '词条工作台 — Nexus Multilingual'
+}, { immediate: true })
+
+function clearAllFilters() {
+  searchQuery.value = ''
+  chineseSearchQuery.value = ''
+  englishSearchQuery.value = ''
+  selectedModule.value = 'all'
+  selectedStatus.value = 'all'
+}
+
+async function clearSearchField(field: 'key' | 'zh' | 'en') {
+  const fields = {
+    key: { state: searchQuery, id: 'term-search' },
+    zh: { state: chineseSearchQuery, id: 'term-search-zh' },
+    en: { state: englishSearchQuery, id: 'term-search-en' },
+  }
+  fields[field].state.value = ''
+  await nextTick()
+  document.getElementById(fields[field].id)?.focus()
+}
 
 const modules = computed(() => {
   const mods = new Set(terms.value.map(t => t.module))
@@ -1001,64 +1042,162 @@ function handleTranslationUpdate(term: TermItem) {
 
 const showBatchAddModal = ref(false)
 const batchAddText = ref('')
+const batchAddStep = ref<'input' | 'preview'>('input')
+const batchSourceLangCode = ref('')
+const batchDefaultModule = ref('')
+const batchCreateRows = ref<BatchCreateRow[]>([])
+const batchAddError = ref('')
+const isBatchCreatingTerms = ref(false)
+const recentlyCreatedTermIds = ref<string[]>([])
+const BATCH_CREATE_LIMIT = 500
+
+function resetBatchAdd() {
+  batchAddText.value = ''
+  batchAddStep.value = 'input'
+  batchDefaultModule.value = ''
+  batchCreateRows.value = []
+  batchAddError.value = ''
+  batchSourceLangCode.value = sourceLanguageCode.value || targetLanguages.value[0]?.code || ''
+}
+
+function openBatchAddDialog() {
+  resetBatchAdd()
+  showBatchAddModal.value = true
+}
+
+function handleBatchAddOpenChange(open: boolean) {
+  if (isBatchCreatingTerms.value)
+    return
+  showBatchAddModal.value = open
+  if (!open)
+    resetBatchAdd()
+}
+
+function parseBatchCreateLine(line: string, index: number): BatchCreateRow {
+  const text = line.trim()
+  const tabIndex = text.indexOf('\t')
+  const pipeIndex = text.indexOf('|')
+  const separatorIndex = tabIndex >= 0 ? tabIndex : pipeIndex
+
+  return {
+    clientId: `row-${Date.now()}-${index + 1}`,
+    key: separatorIndex >= 0 ? text.slice(0, separatorIndex).trim() : '',
+    module: batchDefaultModule.value.trim(),
+    description: '',
+    sourceText: separatorIndex >= 0 ? text.slice(separatorIndex + 1).trim() : text,
+  }
+}
 
 function confirmBatchAdd() {
-  if (!batchAddText.value.trim()) {
-    showBatchAddModal.value = false
+  batchAddError.value = ''
+  if (!batchSourceLangCode.value) {
+    batchAddError.value = '当前项目没有可用语言，请先配置项目语言。'
     return
   }
 
-  const lines = batchAddText.value.split('\n').filter(line => line.trim())
-  const newItems: TermItem[] = []
-
-  lines.forEach(line => {
-    const text = line.trim()
-    const hasChinese = /[\u4e00-\u9fa5]/.test(text)
-
-    newItems.push({
-      id: (Date.now() + Math.random()).toString(),
-      module: '',
-      key: '', // Key left empty for user to fill
-      description: '',
-      status: 'draft',
-      translations: targetLanguages.value.reduce((acc, lang) => {
-        // Decide which language column to fill
-        if (hasChinese && lang.code === 'cn') {
-          acc[lang.code] = text
-        } else if (!hasChinese && lang.code === 'en') {
-          acc[lang.code] = text
-        } else {
-          acc[lang.code] = ''
-        }
-        return acc
-      }, {} as Translation),
-      updatedAt: new Date().toLocaleString(),
-      history: [
-        { time: new Date().toLocaleString(), action: '通过快捷批量创建录入', user: '当前用户' }
-      ]
-    })
-  })
-
-  terms.value = [...newItems, ...terms.value]
-
-  // Select all newly added items and enter edit mode
-  selectedTermIds.value = [...newItems.map(item => item.id), ...selectedTermIds.value]
-  if (!isGlobalEditing.value) {
-    enterEditMode()
+  const lines = batchAddText.value.split(/\r?\n/).filter(line => line.trim())
+  if (lines.length === 0) {
+    batchAddError.value = '请至少输入一条内容。'
+    return
+  }
+  if (lines.length > BATCH_CREATE_LIMIT) {
+    batchAddError.value = `单次最多创建 ${BATCH_CREATE_LIMIT} 个词条，当前共 ${lines.length} 条。`
+    return
   }
 
-  toast.success('批量创建成功', {
-    description: `已成功创建 ${newItems.length} 个词条，已为您自动开启选中行的编辑模式。`
-  })
+  batchCreateRows.value = lines.map(parseBatchCreateLine)
+  batchAddStep.value = 'preview'
+}
 
-  batchAddText.value = ''
-  showBatchAddModal.value = false
+const batchRowErrors = computed(() => {
+  const errors = new Map<string, string>()
+  const batchIdentityCounts = new Map<string, number>()
+  const existingIdentities = new Set(
+    terms.value.map(term => `${term.module.trim()}\u0000${term.key.trim()}`),
+  )
+
+  for (const row of batchCreateRows.value) {
+    const identity = `${row.module.trim()}\u0000${row.key.trim()}`
+    batchIdentityCounts.set(identity, (batchIdentityCounts.get(identity) || 0) + 1)
+  }
+
+  for (const row of batchCreateRows.value) {
+    const key = row.key.trim()
+    const module = row.module.trim()
+    const identity = `${module}\u0000${key}`
+    if (!key)
+      errors.set(row.clientId, '请填写 Key')
+    else if (key.length > 255)
+      errors.set(row.clientId, 'Key 不能超过 255 个字符')
+    else if (module.length > 100)
+      errors.set(row.clientId, '模块不能超过 100 个字符')
+    else if (!row.sourceText.trim())
+      errors.set(row.clientId, '请填写原文')
+    else if ((batchIdentityCounts.get(identity) || 0) > 1)
+      errors.set(row.clientId, '本批次中存在重复的模块和 Key')
+    else if (existingIdentities.has(identity))
+      errors.set(row.clientId, '当前项目已存在相同模块和 Key')
+  }
+
+  return errors
+})
+
+const validBatchCreateCount = computed(() => batchCreateRows.value.length - batchRowErrors.value.size)
+
+function removeBatchCreateRow(clientId: string) {
+  batchCreateRows.value = batchCreateRows.value.filter(row => row.clientId !== clientId)
+  if (batchCreateRows.value.length === 0)
+    batchAddStep.value = 'input'
+}
+
+async function submitBatchCreate() {
+  if (!projectId.value || batchCreateRows.value.length === 0 || batchRowErrors.value.size > 0)
+    return
+
+  isBatchCreatingTerms.value = true
+  batchAddError.value = ''
+  try {
+    const res = await api.post<any>({
+      url: `/projects/${projectId.value}/terms/batch-create`,
+      data: {
+        terms: batchCreateRows.value.map(row => ({
+          clientId: row.clientId,
+          key: row.key.trim(),
+          module: row.module.trim(),
+          description: row.description.trim(),
+          translations: {
+            [batchSourceLangCode.value]: row.sourceText.trim(),
+          },
+        })),
+      },
+    })
+
+    const createdIds = (res.data?.terms || []).map((item: any) => String(item.term?.id)).filter(Boolean)
+    recentlyCreatedTermIds.value = createdIds
+    currentPage.value = 1
+    await loadTerms()
+    showBatchAddModal.value = false
+    resetBatchAdd()
+    toast.success('批量创建成功', {
+      description: `已成功创建 ${res.data?.createdCount ?? createdIds.length} 个词条。`,
+    })
+    window.setTimeout(() => {
+      recentlyCreatedTermIds.value = []
+    }, 5000)
+  }
+  catch (error: any) {
+    batchAddError.value = error.message || '批量创建失败，请检查后重试。'
+  }
+  finally {
+    isBatchCreatingTerms.value = false
+  }
 }
 
 // Focus logic removed as part of Global Edit Mode cleanup
 
 const showExportModal = ref(false)
 const selectedExportLangs = ref<string[]>([])
+const isExportingJson = ref(false)
 const isDrawerOpen = ref(false)
 const activeDrawerTerm = ref<TermItem | null>(null)
 const presentDeletingId = ref<string | null>(null)
@@ -1302,6 +1441,8 @@ function closeDrawer() {
 
 const excelFileInput = ref<HTMLInputElement | null>(null)
 const jsonFileInput = ref<HTMLInputElement | null>(null)
+const importingExcel = ref(false)
+const excelImportStage = ref('')
 
 interface JsonImportItem {
   module: string
@@ -1310,6 +1451,8 @@ interface JsonImportItem {
 }
 
 function triggerExcelImport() {
+  if (importingExcel.value)
+    return
   excelFileInput.value?.click()
 }
 
@@ -1443,7 +1586,7 @@ async function handleJsonImport(event: Event) {
   const files = target.files
   if (!files || files.length === 0) return
 
-  const validCodes = ALL_LANGUAGES.map(l => l.code)
+  const validCodes = availableLanguages.value.map(lang => lang.code)
   const projectCodes = targetLanguages.value.map(l => l.code)
   importingJson.value = true
 
@@ -1462,7 +1605,7 @@ async function handleJsonImport(event: Event) {
 
     // Tier 2: valid code but not configured in this project — prompt user to add it
     if (!projectCodes.includes(langCode)) {
-      const langName = ALL_LANGUAGES.find(l => l.code === langCode)?.name ?? langCode
+      const langName = availableLanguages.value.find(lang => lang.code === langCode)?.name ?? langCode
       errors.push(`「${file.name}」[${langName}] 未在本项目中配置，请先到项目设置中添加该语言，跳过`)
       continue
     }
@@ -1504,96 +1647,188 @@ async function handleJsonImport(event: Event) {
 async function handleExcelImport(event: Event) {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
-  if (!file) return
+  if (!file)
+    return
+
+  importingExcel.value = true
+  excelImportStage.value = '正在读取文件'
+  const importToastId = toast.loading('正在导入 Excel', {
+    description: `正在读取「${file.name}」，请勿关闭页面。`,
+    duration: Infinity,
+  })
 
   try {
+    // Let Vue paint the loading state before XLSX performs synchronous parsing.
+    await nextTick()
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+
     const data = await file.arrayBuffer()
+    excelImportStage.value = '正在解析并校验'
+    toast.loading('正在导入 Excel', {
+      id: importToastId,
+      description: `正在解析并校验「${file.name}」。`,
+      duration: Infinity,
+    })
+    await nextTick()
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+
     const workbook = XLSX.read(data)
     const firstSheetName = workbook.SheetNames[0]
     if (!firstSheetName) {
-      toast.error('导入失败', { description: '无法读取 Excel 的工作表。' })
-      return
+      throw new Error('无法读取 Excel 的工作表。')
     }
     const worksheet = workbook.Sheets[firstSheetName]
     if (!worksheet) {
-      toast.error('导入失败', { description: '找不到该工作表。' })
-      return
+      throw new Error('找不到该工作表。')
     }
 
     // Parse as 2D array
     const json: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
 
     if (json.length < 2) {
-      toast.error('导入失败', { description: '未检测到有效数据或语言标识头。' })
-      return
+      throw new Error('未检测到有效数据或语言标识头。')
     }
 
     const header = json[0] || []
+    const keyHeader = typeof header[0] === 'string' ? header[0].trim().toLowerCase() : ''
+    if (keyHeader !== 'key') {
+      throw new Error('第一列的表头必须是 key。')
+    }
+
     // Filter only columns where the header matches an existing language code
     const langIdxMap = new Map<number, string>()
     header.forEach((col: string, idx: number) => {
-      if (col && typeof col === 'string') {
+      if (idx > 0 && col && typeof col === 'string') {
         const code = col.trim().toLowerCase()
-        if (targetLanguages.value.some(l => l.code === code)) {
-          langIdxMap.set(idx, code)
+        const matchedLanguage = targetLanguages.value.find(lang => lang.code.toLowerCase() === code)
+        if (matchedLanguage) {
+          langIdxMap.set(idx, matchedLanguage.code)
         }
       }
     })
 
     if (langIdxMap.size === 0) {
-      toast.error('导入失败', { description: '第一行无法识别任何支持的语言代码(如 cn, en)。' })
-      return
+      throw new Error('第一行无法识别任何支持的语言代码（如 cn、en）。')
     }
 
-    let importedCount = 0
+    const rowsToImport: Array<{
+      clientId: string
+      key: string
+      module: string
+      description: string
+      translations: Translation
+    }> = []
+    const validationErrors: string[] = []
+    const importedKeys = new Set<string>()
+    const existingKeys = new Set(
+      terms.value
+        .filter(term => !term.module.trim())
+        .map(term => term.key.trim()),
+    )
 
-    // Loop through remaining rows
+    // Loop through remaining rows and validate before sending anything to the server
     for (let i = 1; i < json.length; i++) {
       const row = json[i]
-      if (!row || row.length === 0) continue
+      if (!row || row.length === 0)
+        continue
 
-      // Check if row has any valid translation text
+      const rowNumber = i + 1
+      const key = row[0] === undefined || row[0] === null ? '' : String(row[0]).trim()
       const hasContent = Array.from(langIdxMap.keys()).some(idx => row[idx] && String(row[idx]).trim() !== '')
-      if (!hasContent) continue
-
-      const newTerm: TermItem = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-        module: '',
-        key: '', // Default empty key, will prompt user to set it
-        description: '',
-        status: 'draft',
-        translations: targetLanguages.value.reduce((acc, lang) => {
-          acc[lang.code] = ''
-          return acc
-        }, {} as Translation),
-        updatedAt: new Date().toLocaleString(),
-        history: [
-          { time: new Date().toLocaleString(), action: '由 Excel 批量导入翻译', user: '当前用户' }
-        ]
+      if (!key && !hasContent)
+        continue
+      if (!key) {
+        validationErrors.push(`第 ${rowNumber} 行：key 不能为空`)
+        continue
+      }
+      if (Array.from(key).length > 255) {
+        validationErrors.push(`第 ${rowNumber} 行：key 不能超过 255 个字符`)
+        continue
+      }
+      if (!hasContent) {
+        validationErrors.push(`第 ${rowNumber} 行：至少填写一种语言内容`)
+        continue
+      }
+      if (importedKeys.has(key)) {
+        validationErrors.push(`第 ${rowNumber} 行：key「${key}」在表格中重复`)
+        continue
+      }
+      if (existingKeys.has(key)) {
+        validationErrors.push(`第 ${rowNumber} 行：当前项目已存在 key「${key}」`)
+        continue
       }
 
-      // Populate valid fields from row mapping
+      const translations = targetLanguages.value.reduce((acc, lang) => {
+        acc[lang.code] = ''
+        return acc
+      }, {} as Translation)
+
       langIdxMap.forEach((langCode, idx) => {
         if (row[idx] !== undefined && row[idx] !== null) {
-          newTerm.translations[langCode] = String(row[idx]).trim()
+          translations[langCode] = String(row[idx]).trim()
         }
       })
 
-      terms.value.unshift(newTerm)
-      importedCount++
+      importedKeys.add(key)
+      rowsToImport.push({
+        clientId: `excel-row-${rowNumber}`,
+        module: '',
+        key,
+        description: '',
+        translations,
+      })
     }
 
-    toast.success('导入成功', { description: `成功从 Excel 导入了 ${importedCount} 条记录！` })
+    if (validationErrors.length > 0) {
+      const visibleErrors = validationErrors.slice(0, 5)
+      const remainingCount = validationErrors.length - visibleErrors.length
+      throw new Error(`${visibleErrors.join('；')}${remainingCount > 0 ? `；另有 ${remainingCount} 个错误` : ''}`)
+    }
 
-  } catch (error) {
+    if (rowsToImport.length === 0) {
+      throw new Error('未检测到可导入的数据。')
+    }
+
+    if (rowsToImport.length > BATCH_CREATE_LIMIT) {
+      throw new Error(`单次最多导入 ${BATCH_CREATE_LIMIT} 条，当前共 ${rowsToImport.length} 条。`)
+    }
+
+    excelImportStage.value = `正在导入 ${rowsToImport.length} 条词条`
+    toast.loading('正在导入 Excel', {
+      id: importToastId,
+      description: `文件校验通过，正在创建 ${rowsToImport.length} 个词条。`,
+      duration: Infinity,
+    })
+    const res = await api.post<any>({
+      url: `/projects/${projectId.value}/terms/batch-create`,
+      data: { terms: rowsToImport },
+    })
+    if (res.code !== 200) {
+      throw new Error(res.message || '服务器未能完成 Excel 导入')
+    }
+
+    excelImportStage.value = '正在刷新词条列表'
+    await loadTerms()
+    toast.success('导入成功', {
+      id: importToastId,
+      description: `已从 Excel 创建 ${res.data?.createdCount ?? rowsToImport.length} 个词条。`,
+    })
+  }
+  catch (error: any) {
     console.error(error)
-    toast.error('导入失败', { description: 'Excel解析出现异常。' })
-  } finally {
+    toast.error('导入失败', {
+      id: importToastId,
+      description: error.message || 'Excel 解析出现异常。',
+    })
+  }
+  finally {
+    importingExcel.value = false
+    excelImportStage.value = ''
     // Reset file input so same file can be imported again if needed
-    if (target) target.value = ''
+    if (target)
+      target.value = ''
   }
 }
-
 
 // Side drawer functions already defined above
 
@@ -1683,47 +1918,94 @@ function deselectAllExportLangs() {
   selectedExportLangs.value = []
 }
 
-function confirmExport() {
+function createJsonExportObject(langCode: string, itemsToExport: TermItem[]) {
+  const exportObject: Record<string, string | Record<string, string>> = {}
+
+  itemsToExport.forEach((term) => {
+    const value = term.translations[langCode] || ''
+    if (term.module) {
+      const moduleValue = exportObject[term.module]
+      const moduleTranslations = typeof moduleValue === 'object' ? moduleValue : {}
+      moduleTranslations[term.key] = value
+      exportObject[term.module] = moduleTranslations
+    } else {
+      exportObject[term.key] = value
+    }
+  })
+
+  return exportObject
+}
+
+async function createZipArchive(files: Record<string, Uint8Array>) {
+  const { zip } = await import('fflate')
+  return new Promise<Uint8Array>((resolve, reject) => {
+    zip(files, { level: 6 }, (error, data) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve(data)
+    })
+  })
+}
+
+function getJsonArchiveName() {
+  const projectName = String(currentProject.value?.name || 'translations')
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
+    .replace(/[.\s]+$/g, '')
+    .slice(0, 80) || 'translations'
+  const date = new Date().toISOString().slice(0, 10)
+  return `${projectName}_locales_${date}.zip`
+}
+
+async function confirmExport() {
   if (selectedExportLangs.value.length === 0) {
     toast.warning('导出提醒', { description: '请至少选择一种语言导出！' })
     return
   }
 
   const langsToExport = targetLanguages.value.filter(lang => selectedExportLangs.value.includes(lang.code))
+  const hasSelected = selectedCount.value > 0
+  const itemsToExport = hasSelected
+    ? selectedTermsForBulk.value
+    : filteredTerms.value
 
-  langsToExport.forEach(lang => {
-    const hasSelected = selectedCount.value > 0
-    const itemsToExport = hasSelected
-      ? selectedTermsForBulk.value
-      : filteredTerms.value
+  if (!itemsToExport.length) {
+    toast.warning('导出提醒', { description: '当前筛选结果或选中列表中没有可导出的词条。' })
+    return
+  }
 
-    if (!itemsToExport || itemsToExport.length === 0) return
-
-    // 构建嵌套结构
-    const exportObject: any = {}
-    itemsToExport.forEach(term => {
-      const val = term.translations[lang.code] || ''
-      if (term.module) {
-        if (!exportObject[term.module]) exportObject[term.module] = {}
-        exportObject[term.module][term.key] = val
-      } else {
-        exportObject[term.key] = val
-      }
+  isExportingJson.value = true
+  try {
+    const { strToU8 } = await import('fflate')
+    const files: Record<string, Uint8Array> = {}
+    langsToExport.forEach((lang) => {
+      const exportObject = createJsonExportObject(lang.code, itemsToExport)
+      files[`${lang.code}.json`] = strToU8(JSON.stringify(exportObject, null, 2))
     })
 
-    const blob = new Blob([JSON.stringify(exportObject, null, 2)], { type: 'application/json' })
+    const archive = await createZipArchive(files)
+    const blob = new Blob([archive], { type: 'application/zip' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${lang.code}.json`
+    a.download = getJsonArchiveName()
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  })
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 
-  toast.success('导出成功', { description: `已触发 ${langsToExport.length} 个本地化文件的下载。` })
-  closeExportModal()
+    toast.success('导出成功', {
+      description: `已将 ${langsToExport.length} 个语言 JSON 打包为一个 ZIP 文件。`,
+    })
+    closeExportModal()
+  } catch (error: any) {
+    console.error('Export JSON ZIP Error:', error)
+    toast.error('导出失败', { description: error?.message || 'ZIP 文件生成失败，请重试。' })
+  } finally {
+    isExportingJson.value = false
+  }
 }
 
 function exportToExcel() {
@@ -1737,16 +2019,16 @@ function exportToExcel() {
     return
   }
 
-  const exportRows = itemsToExport.map(term => {
+  const exportRows = itemsToExport.map((term) => {
     const row: any = {
-      'Module': term.module || '',
-      'Key': term.key || '',
-      'Description': term.description || '',
-      'Status': statusOptions.find(o => o.value === term.status)?.label || term.status,
+      key: term.key || '',
+      Module: term.module || '',
+      Description: term.description || '',
+      Status: statusOptions.find(o => o.value === term.status)?.label || term.status,
     }
     // Add all language translations as columns
-    targetLanguages.value.forEach(lang => {
-      row[lang.name] = term.translations[lang.code] || ''
+    targetLanguages.value.forEach((lang) => {
+      row[lang.code] = term.translations[lang.code] || ''
     })
     return row
   })
@@ -1757,7 +2039,8 @@ function exportToExcel() {
     XLSX.utils.book_append_sheet(wb, ws, 'Translations')
     XLSX.writeFile(wb, `translations_export_${new Date().toISOString().slice(0, 10)}.xlsx`)
     toast.success('导出成功', { description: `已导出 ${itemsToExport.length} 条数据到 Excel。` })
-  } catch (err) {
+  }
+  catch (err) {
     console.error('Export Excel Error:', err)
     toast.error('导出失败')
   }
@@ -1766,25 +2049,29 @@ function exportToExcel() {
 </script>
 
 <template>
-  <div class="flex h-[calc(100svh-6rem)] min-h-0 flex-col overflow-hidden p-6 space-y-4 bg-gray-50 dark:bg-zinc-900 border-l border-gray-200 dark:border-zinc-800">
-    <div class="flex items-center justify-between gap-4 shrink-0">
-      <div class="flex min-w-0 items-center gap-4">
-        <div class="shrink-0">
-          <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">词条工作台</h1>
-          <p class="text-[10px] text-gray-400 mt-0.5">多语言词条翻译与管理系统</p>
-        </div>
+  <div class="flex min-h-[calc(100svh-3rem)] flex-col gap-4 p-4 md:min-h-svh lg:p-6">
+    <header class="shrink-0 space-y-4">
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+          <div class="shrink-0">
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">词条工作台</h1>
+            <p class="mt-1 text-sm text-muted-foreground">管理当前项目的词条、译文与发布流程</p>
+          </div>
 
-        <div class="hidden sm:block h-8 w-px bg-gray-200 dark:bg-zinc-800 mx-1" />
+          <div class="hidden h-10 w-px bg-border sm:block" />
 
-        <!-- Project Switcher -->
+          <!-- Project Switcher -->
         <UiDropdownMenu>
           <UiDropdownMenuTrigger as-child>
-            <UiButton variant="ghost" class="h-10 max-w-[260px] flex items-center px-3 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors">
-              <FolderKanban class="w-4 h-4 mr-2 text-primary" />
-              <span class="font-medium text-sm truncate">
-                {{ projects.find(p => String(p.id) === projectId)?.name || '加载中...' }}
+            <UiButton variant="outline" class="h-10 max-w-[300px] justify-start rounded-xl bg-background px-3">
+              <span class="mr-2 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                <FolderKanban class="size-3.5 text-primary" />
               </span>
-              <ChevronDown class="ml-2 w-4 h-4 text-gray-400" />
+              <span class="min-w-0 text-left">
+                <span class="block text-[10px] leading-none text-muted-foreground">当前项目</span>
+                <span class="mt-1 block truncate text-sm font-medium leading-none">{{ currentProject?.name || '加载中...' }}</span>
+              </span>
+              <ChevronDown class="ml-auto size-4 shrink-0 text-muted-foreground" />
             </UiButton>
           </UiDropdownMenuTrigger>
           <UiDropdownMenuContent align="start" class="w-56">
@@ -1800,9 +2087,16 @@ function exportToExcel() {
               <CheckCircle2 v-if="String(p.id) === projectId" class="w-3 h-3" />
             </UiDropdownMenuItem>
           </UiDropdownMenuContent>
-        </UiDropdownMenu>
-      </div>
-      <div class="flex shrink-0 items-center justify-end gap-2">
+          </UiDropdownMenu>
+
+          <div class="flex min-w-0 items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs">
+            <span class="font-medium text-foreground">{{ targetLanguages.find(lang => lang.code === sourceLanguageCode)?.name || '源语言' }}</span>
+            <span class="text-primary">→</span>
+            <span class="truncate text-muted-foreground">{{ Math.max(targetLanguages.length - 1, 0) }} 个目标语种</span>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 xl:justify-end">
         <input
           type="file"
           ref="excelFileInput"
@@ -1820,54 +2114,93 @@ function exportToExcel() {
         />
         <UiDropdownMenu>
           <UiDropdownMenuTrigger as-child>
-            <UiButton variant="outline" class="gap-2">
-              <MoreHorizontal class="w-4 h-4" />
-              更多
-              <ChevronDown class="w-3.5 h-3.5 opacity-50" />
+            <UiButton
+              variant="outline"
+              class="w-[7.5rem] justify-center gap-2 rounded-xl"
+              :disabled="importingExcel"
+              :aria-label="importingExcel ? excelImportStage : '打开工作台工具箱'"
+            >
+              <Loader2 v-if="importingExcel" class="size-4 animate-spin" />
+              <Wrench v-else class="size-4" />
+              <span aria-live="polite">{{ importingExcel ? 'Excel 导入中' : '工具箱' }}</span>
+              <ChevronDown v-if="!importingExcel" class="size-3.5 opacity-50" />
             </UiButton>
           </UiDropdownMenuTrigger>
-          <UiDropdownMenuContent align="end" class="w-52">
+          <UiDropdownMenuContent align="end" class="w-80 p-1.5">
+            <UiDropdownMenuLabel class="px-2 py-2">
+              <span class="block text-sm font-semibold text-foreground">工作台工具箱</span>
+              <span class="mt-0.5 block text-xs font-normal text-muted-foreground">集中处理批量录入、数据导出和项目维护</span>
+            </UiDropdownMenuLabel>
+            <UiDropdownMenuSeparator />
             <template v-if="!isTranslator && !isProductor">
-              <UiDropdownMenuLabel class="text-xs text-gray-400">数据导入/导出</UiDropdownMenuLabel>
-              <UiDropdownMenuItem @click="triggerJsonImport" :disabled="importingJson || isGlobalEditing">
-               <Loader2 v-if="importingJson" class="w-4 h-4 mr-2 animate-spin" />
-               <Upload v-else class="w-4 h-4 mr-2 text-muted-foreground" />
-               {{ importingJson ? '导入中...' : '导入多语言 JSON' }}
+              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">批量录入</UiDropdownMenuLabel>
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingJson || isGlobalEditing" @click="triggerJsonImport">
+                <Loader2 v-if="importingJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
+                <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">{{ importingJson ? '正在导入 JSON' : '导入多语言 JSON' }}</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">一次选择多个语言文件并合并词条</span>
+                </span>
               </UiDropdownMenuItem>
-              <UiDropdownMenuItem @click="openObjectImportModal" :disabled="importingObjectJson || isGlobalEditing">
-               <Loader2 v-if="importingObjectJson" class="w-4 h-4 mr-2 animate-spin" />
-               <Upload v-else class="w-4 h-4 mr-2 text-muted-foreground" />
-               粘贴对象
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingObjectJson || isGlobalEditing" @click="openObjectImportModal">
+                <Loader2 v-if="importingObjectJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
+                <Copy v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">粘贴对象</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">粘贴代码对象并导入指定语言</span>
+                </span>
               </UiDropdownMenuItem>
-              <UiDropdownMenuItem @click="triggerExcelImport" :disabled="isGlobalEditing">
-               <Upload class="w-4 h-4 mr-2 text-muted-foreground" />
-               导入 Excel
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing || importingExcel" @click="triggerExcelImport">
+                <Loader2 v-if="importingExcel" class="mt-0.5 size-4 shrink-0 animate-spin" />
+                <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">{{ importingExcel ? '正在导入 Excel' : '导入 Excel' }}</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">从表格批量创建词条和译文</span>
+                </span>
               </UiDropdownMenuItem>
               <UiDropdownMenuSeparator />
-              <UiDropdownMenuItem @click="openExportModal" class="text-indigo-600 focus:text-indigo-700">
-               <Download class="w-4 h-4 mr-2" />
-               导出多语言 JSON
+              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">数据导出</UiDropdownMenuLabel>
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="openExportModal">
+                <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">导出多语言 JSON</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">按语言生成文件并打包为 ZIP</span>
+                </span>
               </UiDropdownMenuItem>
-              <UiDropdownMenuItem @click="exportToExcel" class="text-emerald-600 focus:text-emerald-700">
-               <Download class="w-4 h-4 mr-2" />
-               导出为 Excel
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="exportToExcel">
+                <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">导出为 Excel</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">导出筛选结果或当前选中词条</span>
+                </span>
               </UiDropdownMenuItem>
             </template>
             <UiDropdownMenuSeparator v-if="!isTranslator && !isProductor" />
-            <UiDropdownMenuItem @click="showBatchAddModal = true" :disabled="isGlobalEditing">
-              <ListPlus class="w-4 h-4 mr-2 text-muted-foreground" />
-              快捷批量创建
+            <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">词条与项目</UiDropdownMenuLabel>
+            <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing" @click="openBatchAddDialog">
+              <ListPlus class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <span class="min-w-0">
+                <span class="block text-sm font-medium">快捷批量创建</span>
+                <span class="mt-0.5 block text-xs text-muted-foreground">粘贴多行原文，预览后统一创建</span>
+              </span>
             </UiDropdownMenuItem>
             <UiDropdownMenuItem
               v-if="!isTranslator"
+              class="items-start gap-3 px-2 py-2.5"
               @click="router.push({ path: '/project-logs', query: { project: projectId } })"
             >
-              <Activity class="w-4 h-4 mr-2 text-muted-foreground" />
-              操作日志
+              <Activity class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <span class="min-w-0">
+                <span class="block text-sm font-medium">操作日志</span>
+                <span class="mt-0.5 block text-xs text-muted-foreground">查看项目内词条的变更记录</span>
+              </span>
             </UiDropdownMenuItem>
-            <UiDropdownMenuItem v-if="isAdmin" @click="showSettingsModal = true">
-              <Wand2 class="w-4 h-4 mr-2 text-muted-foreground" />
-              AI 提示词配置
+            <UiDropdownMenuItem v-if="isAdmin" class="items-start gap-3 px-2 py-2.5" @click="showSettingsModal = true">
+              <Wand2 class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <span class="min-w-0">
+                <span class="block text-sm font-medium">AI 提示词配置</span>
+                <span class="mt-0.5 block text-xs text-muted-foreground">调整当前项目的 AI 翻译规则</span>
+              </span>
             </UiDropdownMenuItem>
           </UiDropdownMenuContent>
         </UiDropdownMenu>
@@ -1876,13 +2209,13 @@ function exportToExcel() {
           v-if="!isGlobalEditing"
           variant="secondary"
           @click="enterEditMode"
-          class="border-primary/20 text-primary hover:bg-primary/5"
+          class="rounded-xl border-primary/20 text-primary hover:bg-primary/5"
         >
           <Edit3 class="w-4 h-4 mr-2" />
           进入编辑模式
         </UiButton>
 
-        <div v-else class="flex gap-2 p-1 bg-primary/10 rounded-lg border border-primary/20 animate-in fade-in zoom-in duration-200">
+        <div v-else class="flex gap-1 rounded-xl border border-primary/20 bg-primary/[0.07] p-1 animate-in fade-in duration-200">
           <UiButton
             variant="ghost"
             size="sm"
@@ -1910,43 +2243,81 @@ function exportToExcel() {
           variant="default"
           @click="addNewTerm"
           :disabled="isGlobalEditing"
+          class="rounded-xl"
         >
           <Plus class="w-4 h-4 mr-2" />
           新建词条
         </UiButton>
+        </div>
       </div>
-    </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 xl:max-w-2xl">
+        <div class="flex items-center justify-between rounded-lg bg-muted/55 px-3 py-2">
+          <span class="text-muted-foreground">词条总量</span>
+          <strong class="font-mono text-sm text-foreground">{{ visibleTerms.length }}</strong>
+        </div>
+        <div class="flex items-center justify-between rounded-lg bg-amber-500/8 px-3 py-2">
+          <span class="text-amber-700 dark:text-amber-300">待补译</span>
+          <strong class="font-mono text-sm text-amber-700 dark:text-amber-300">{{ pendingTermCount }}</strong>
+        </div>
+        <div class="flex items-center justify-between rounded-lg bg-sky-500/8 px-3 py-2">
+          <span class="text-sky-700 dark:text-sky-300">可校对</span>
+          <strong class="font-mono text-sm text-sky-700 dark:text-sky-300">{{ readyTermCount }}</strong>
+        </div>
+        <div class="flex items-center gap-2 rounded-lg bg-emerald-500/8 px-3 py-2">
+          <span class="shrink-0 text-emerald-700 dark:text-emerald-300">已发布</span>
+          <div class="h-1.5 min-w-8 flex-1 overflow-hidden rounded-full bg-emerald-500/15">
+            <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${publishedRate}%` }" />
+          </div>
+          <strong class="font-mono text-sm text-emerald-700 dark:text-emerald-300">{{ publishedRate }}%</strong>
+        </div>
+      </div>
+
+    </header>
 
     <!-- 顶栏过滤器和批量操作栏 -->
-    <div class="flex flex-col gap-4 p-4 bg-white dark:bg-zinc-950 rounded-lg shadow-sm border border-gray-100 dark:border-zinc-800 shrink-0">
-      <div class="flex flex-wrap gap-4">
-        <div class="min-w-[220px] flex-1 relative">
-          <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+    <section aria-label="词条筛选与批量操作" class="shrink-0 overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <div class="grid gap-3 p-3 lg:grid-cols-12 lg:p-4">
+        <div class="relative lg:col-span-4">
+          <label for="term-search" class="sr-only">搜索 Key 或模块</label>
+          <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <UiInput
+            id="term-search"
             v-model="searchQuery"
-            placeholder="搜索 Keyword... (例如 confirm)"
-            class="pl-9"
+            placeholder="搜索 Key 或模块"
+            class="h-10 rounded-xl bg-background pl-9 pr-9"
           />
+          <button v-if="searchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除 Key 或模块搜索" @click="clearSearchField('key')">
+            <X class="size-3.5" />
+          </button>
         </div>
-        <div class="min-w-[220px] flex-1 relative">
-          <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <div class="relative lg:col-span-2">
+          <label for="term-search-zh" class="sr-only">搜索中文译文</label>
           <UiInput
+            id="term-search-zh"
             v-model="chineseSearchQuery"
-            placeholder="搜索中文..."
-            class="pl-9"
+            placeholder="中文译文"
+            class="h-10 rounded-xl bg-background pr-9"
           />
+          <button v-if="chineseSearchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除中文搜索" @click="clearSearchField('zh')">
+            <X class="size-3.5" />
+          </button>
         </div>
-        <div class="min-w-[220px] flex-1 relative">
-          <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <div class="relative lg:col-span-2">
+          <label for="term-search-en" class="sr-only">搜索英文译文</label>
           <UiInput
+            id="term-search-en"
             v-model="englishSearchQuery"
-            placeholder="搜索英文..."
-            class="pl-9"
+            placeholder="英文译文"
+            class="h-10 rounded-xl bg-background pr-9"
           />
+          <button v-if="englishSearchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除英文搜索" @click="clearSearchField('en')">
+            <X class="size-3.5" />
+          </button>
         </div>
 
-        <UiSelect v-model="selectedModule">
-          <UiSelectTrigger class="w-[180px]">
+        <UiSelect v-model="selectedModule" class="lg:col-span-2">
+          <UiSelectTrigger aria-label="按模块筛选" class="h-10 w-full rounded-xl bg-background lg:col-span-2">
             <UiSelectValue placeholder="选择模块" />
           </UiSelectTrigger>
           <UiSelectContent>
@@ -1958,7 +2329,7 @@ function exportToExcel() {
         </UiSelect>
 
         <UiSelect v-model="selectedStatus">
-          <UiSelectTrigger class="w-[180px]">
+          <UiSelectTrigger aria-label="按状态筛选" class="h-10 w-full rounded-xl bg-background lg:col-span-2">
             <UiSelectValue placeholder="选择状态" />
           </UiSelectTrigger>
           <UiSelectContent>
@@ -1970,15 +2341,11 @@ function exportToExcel() {
         </UiSelect>
       </div>
 
-      <!-- 批量操作悬浮栏 (Floating bulk actions) -->
-      <div
-        :class="[
-          'fixed top-6 left-1/2 z-50 -translate-x-1/2 rounded-xl transition-all duration-300 ease-out flex items-center',
-          selectedCount > 0 ? 'translate-y-0 opacity-100 scale-100' : '-translate-y-10 opacity-0 scale-95 pointer-events-none'
-        ]"
-      >
+      <!-- 筛选状态 / 批量操作栏：保持固定高度，避免选择时页面跳动 -->
+      <div class="min-h-[52px] border-t border-border/70 bg-muted/25">
         <div
-          class="p-2 shadow-xl rounded-xl border bg-background/95 supports-backdrop-filter:bg-background/60 backdrop-blur-lg flex items-center gap-x-2"
+          v-if="selectedCount > 0"
+          class="flex min-h-[52px] items-center gap-x-2 overflow-x-auto px-3 py-2 lg:px-4"
         >
           <UiTooltipProvider>
             <UiTooltip>
@@ -1986,7 +2353,7 @@ function exportToExcel() {
                 <UiButton
                   variant="outline"
                   size="icon"
-                  class="size-6 rounded-full"
+                  class="size-7 rounded-full"
                   aria-label="取消选中"
                   title="取消选中"
                   @click="clearSelectedTerms"
@@ -2015,7 +2382,7 @@ function exportToExcel() {
 
           <UiSeparator class="h-5 mx-1" orientation="vertical" />
 
-          <div class="flex items-center gap-x-2">
+          <div class="flex items-center gap-x-2 whitespace-nowrap">
             <!-- Split Batch Translate Button: Developer cannot self-translate -->
             <div class="inline-flex items-center rounded-md shadow-sm" v-if="!isDeveloper">
               <UiButton variant="default" size="sm" @click="batchTranslate()" :disabled="isBatchTranslating" class="rounded-r-none">
@@ -2087,37 +2454,53 @@ function exportToExcel() {
             </UiButton>
           </div>
         </div>
+        <div v-else class="flex min-h-[52px] flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
+          <div class="flex items-center gap-2">
+            <span class="size-1.5 rounded-full bg-primary/60" />
+            <span v-if="hasActiveFilters">筛选后显示 {{ filteredTerms.length }} / {{ visibleTerms.length }} 条词条</span>
+            <span v-else>勾选词条后可进行批量翻译、校对、发布或删除</span>
+          </div>
+          <UiButton v-if="hasActiveFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="clearAllFilters">
+            <X class="mr-1 size-3.5" />
+            清除全部筛选
+          </UiButton>
+        </div>
       </div>
 
       <div
         v-if="canSelectAllFiltered"
-        class="flex flex-wrap items-center justify-center gap-2 rounded-md border border-primary/20 bg-primary/[0.04] px-3 py-2 text-sm text-muted-foreground"
+        class="flex flex-wrap items-center justify-center gap-2 border-t border-primary/15 bg-primary/[0.04] px-3 py-2 text-sm text-muted-foreground"
       >
         <span>已选择当前页 {{ paginatedTerms.length }} 条。</span>
         <UiButton variant="link" size="sm" class="h-auto px-1 py-0 text-primary" @click="selectAllFilteredTerms">
           选择符合当前筛选条件的全部 {{ filteredTerms.length }} 条
         </UiButton>
       </div>
-    </div>
+    </section>
 
     <!-- 词条表格 -->
-    <div class="flex flex-1 min-h-0 flex-col relative overflow-hidden rounded-lg border border-gray-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-950">
+    <section aria-label="词条列表" class="relative flex h-[clamp(620px,72svh,900px)] min-h-[620px] shrink-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
       <div class="min-h-0 flex-1 overflow-hidden">
-      <UiTable class="relative">
-        <UiTableHeader class="sticky top-0 z-10 bg-gray-50 dark:bg-zinc-900">
-          <UiTableRow>
-            <UiTableHead class="w-10 text-center px-3">
+      <UiTable class="relative min-w-max">
+        <UiTableCaption class="sr-only">当前项目的多语言词条、流程状态与更新时间</UiTableCaption>
+        <UiTableHeader class="sticky top-0 z-20 bg-muted/95 backdrop-blur supports-backdrop-filter:bg-muted/80">
+          <UiTableRow class="hover:bg-transparent">
+            <UiTableHead class="w-10 px-3 text-center xl:sticky xl:left-0 xl:z-30 xl:bg-muted/95">
               <UiCheckbox
                 :modelValue="checkboxAllState"
                 @update:modelValue="handleSelectAll"
-                aria-label="Select all"
+                aria-label="选择当前页全部词条"
               />
             </UiTableHead>
-            <UiTableHead class="w-24 text-center">操作</UiTableHead>
-            <UiTableHead class="min-w-[150px]">Key & Info</UiTableHead>
+            <UiTableHead class="w-24 text-center xl:sticky xl:left-10 xl:z-30 xl:bg-muted/95">操作</UiTableHead>
+            <UiTableHead class="min-w-[220px] border-r border-border/70 xl:sticky xl:left-[136px] xl:z-30 xl:bg-muted/95">词条标识与说明</UiTableHead>
             <UiTableHead class="w-28 text-center">状态</UiTableHead>
-            <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[200px]">
-              {{ lang.name }} <span class="text-[10px] opacity-50 font-mono">({{ lang.code }})</span>
+            <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[220px] py-2">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-foreground/80">{{ lang.name }}</span>
+                <span class="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{{ lang.code }}</span>
+                <span v-if="lang.code === sourceLanguageCode" class="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary">源</span>
+              </div>
             </UiTableHead>
             <UiTableHead class="w-36 text-muted-foreground">创建时间</UiTableHead>
             <UiTableHead class="w-36 text-muted-foreground">更新时间</UiTableHead>
@@ -2127,47 +2510,56 @@ function exportToExcel() {
           <UiTableRow
             v-for="term in paginatedTerms"
             :key="term.id"
-            class="group hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 transition-colors border-b border-gray-100 dark:border-zinc-800"
+            class="group border-b border-border/70 transition-colors hover:bg-muted/35"
             :class="{
               'bg-primary/[0.03] dark:bg-primary/[0.05]': isTermSelected(term),
-              'bg-amber-50/30 dark:bg-amber-920/10 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id)
+              'bg-amber-50/30 dark:bg-amber-920/10 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id),
+              'bg-emerald-50/80 dark:bg-emerald-950/20': recentlyCreatedTermIds.includes(String(term.id))
             }"
           >
             <!-- 多选列 -->
-            <UiTableCell class="align-top text-center px-3 py-3 w-10">
+            <UiTableCell class="w-10 bg-card px-3 py-3 text-center align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-0 xl:z-10">
               <UiCheckbox
                 :modelValue="isTermSelected(term)"
                 @update:modelValue="toggleSelectTerm(term.id, $event)"
-                aria-label="Select row"
+                :aria-label="`选择词条 ${term.key || term.id}`"
               />
             </UiTableCell>
 
             <!-- 操作列 -->
-            <UiTableCell class="align-top text-center p-2 w-24">
+            <UiTableCell class="w-24 bg-card p-2 text-center align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-10 xl:z-10">
               <UiTooltipProvider>
                 <div class="flex items-center justify-center gap-1.5 pt-1">
                   <!-- Staged Actions (Wait for review) -->
                   <template v-if="stagedChangeOriginals.has(term.id)">
                     <UiTooltip>
                       <UiTooltipTrigger as-child>
-                        <button
+                        <UiButton
+                          type="button"
+                          variant="ghost"
+                          size="icon"
                           @click="persistStagedRow(term)"
-                          class="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30 rounded-md transition-all"
+                          class="size-8 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
+                          :aria-label="`接受并保存词条 ${term.key}`"
                         >
                           <CheckCircle2 class="w-3.5 h-3.5" />
-                        </button>
+                        </UiButton>
                       </UiTooltipTrigger>
                       <UiTooltipContent side="top">接受并保存</UiTooltipContent>
                     </UiTooltip>
 
                     <UiTooltip>
                       <UiTooltipTrigger as-child>
-                        <button
+                        <UiButton
+                          type="button"
+                          variant="ghost"
+                          size="icon"
                           @click="discardStagedRow(term)"
-                          class="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-md transition-all"
+                          class="size-8 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                          :aria-label="`撤销词条 ${term.key} 的翻译`"
                         >
                           <RotateCcw class="w-3.5 h-3.5" />
-                        </button>
+                        </UiButton>
                       </UiTooltipTrigger>
                       <UiTooltipContent side="top">撤销翻译</UiTooltipContent>
                     </UiTooltip>
@@ -2178,12 +2570,16 @@ function exportToExcel() {
                     <!-- Edit/Detail Button -->
                     <UiTooltip>
                       <UiTooltipTrigger as-child>
-                        <button
+                        <UiButton
+                          type="button"
+                          variant="ghost"
+                          size="icon"
                           @click="openDrawer(term)"
-                          class="p-1.5 hover:text-primary hover:bg-primary/10 rounded-md transition-all text-muted-foreground"
+                          class="size-8 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                          :aria-label="`打开词条 ${term.key} 的详情`"
                         >
                           <Edit3 class="w-3.5 h-3.5" />
-                        </button>
+                        </UiButton>
                       </UiTooltipTrigger>
                       <UiTooltipContent side="top">配置详情</UiTooltipContent>
                     </UiTooltip>
@@ -2191,22 +2587,26 @@ function exportToExcel() {
                     <!-- Translate Button: Developer cannot self-translate -->
                     <UiTooltip v-if="term.status !== 'published' && !isDeveloper">
                       <UiTooltipTrigger as-child>
-                        <button
+                        <UiButton
+                          type="button"
+                          variant="ghost"
+                          size="icon"
                           @click="translateRow(term)"
                           :disabled="translatingTerms.has(term.id)"
-                          class="p-1.5 hover:text-primary hover:bg-primary/10 rounded-md transition-all disabled:opacity-30 text-primary/70"
+                          class="size-8 text-primary/70 hover:bg-primary/10 hover:text-primary disabled:opacity-30"
+                          :aria-label="translatingTerms.has(term.id) ? `正在翻译词条 ${term.key}` : `AI 翻译词条 ${term.key}`"
                         >
                           <Loader2 v-if="translatingTerms.has(term.id)" class="w-3.5 h-3.5 animate-spin" />
                           <Wand2 v-else class="w-3.5 h-3.5" />
-                        </button>
+                        </UiButton>
                       </UiTooltipTrigger>
                       <UiTooltipContent side="top">AI 翻译</UiTooltipContent>
                     </UiTooltip>
                     <UiTooltip v-else>
                       <UiTooltipTrigger as-child>
-                        <button disabled class="p-1.5 text-gray-300 dark:text-gray-600 rounded-md cursor-not-allowed">
-                          <Wand2 class="w-3.5 h-3.5" />
-                        </button>
+                          <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/40" aria-label="当前不可使用 AI 翻译">
+                            <Wand2 class="w-3.5 h-3.5" />
+                          </UiButton>
                       </UiTooltipTrigger>
                       <UiTooltipContent side="top">请通过配置详情进行更新</UiTooltipContent>
                     </UiTooltip>
@@ -2215,15 +2615,15 @@ function exportToExcel() {
                       <UiTooltip :open="presentDeletingId === term.id ? false : undefined">
                         <UiTooltipTrigger as-child v-if="isAdmin || isDeveloper">
                           <UiAlertDialogTrigger as-child>
-                            <button class="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-all">
+                            <UiButton type="button" variant="ghost" size="icon" class="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" :aria-label="`删除词条 ${term.key}`">
                               <Trash2 class="w-3.5 h-3.5" />
-                            </button>
+                            </UiButton>
                           </UiAlertDialogTrigger>
                         </UiTooltipTrigger>
                         <UiTooltipTrigger as-child v-else>
-                          <button disabled class="p-1.5 text-gray-200 cursor-not-allowed">
+                          <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/30" aria-label="无权删除词条">
                             <Trash2 class="w-3.5 h-3.5" />
-                          </button>
+                          </UiButton>
                         </UiTooltipTrigger>
                         <UiTooltipContent side="top">{{ (isAdmin || isDeveloper) ? '删除词条' : '无权删除' }}</UiTooltipContent>
                       </UiTooltip>
@@ -2245,9 +2645,9 @@ function exportToExcel() {
                     </UiAlertDialog>
                     <UiTooltip v-else>
                       <UiTooltipTrigger as-child>
-                        <button disabled class="p-1.5 text-gray-200 dark:text-gray-700 rounded-md cursor-not-allowed">
+                        <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/30" aria-label="当前不可删除词条">
                           <Trash2 class="w-3.5 h-3.5" />
-                        </button>
+                        </UiButton>
                       </UiTooltipTrigger>
                       <UiTooltipContent side="top">{{ term.status === 'published' ? '不可删除线上已发布项' : '无权限操作' }}</UiTooltipContent>
                     </UiTooltip>
@@ -2257,7 +2657,7 @@ function exportToExcel() {
             </UiTableCell>
 
             <!-- 词条基础信息列 (Optimized Layout) -->
-            <UiTableCell class="align-top p-3 min-w-[150px]" :class="{ 'bg-primary/[0.02]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
+            <UiTableCell class="min-w-[220px] border-r border-border/70 bg-card p-3 align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-[136px] xl:z-10" :class="{ 'bg-primary/[0.06]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
               <div class="flex flex-col gap-1 min-w-0">
                 <!-- Row 1: Module & Key & Sidebar Toggle -->
                 <div class="flex items-center gap-1.5 min-w-0 h-6">
@@ -2280,11 +2680,11 @@ function exportToExcel() {
                   </template>
                   <template v-else>
                     <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                      <span v-if="term.module" class="text-[9px] font-bold uppercase tracking-wider text-primary/80 bg-primary/10 px-1 py-0.5 rounded shrink-0 border border-primary/5">
+                      <span v-if="term.module" class="shrink-0 rounded-md border border-primary/10 bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-medium text-primary">
                         {{ term.module }}
                       </span>
                       <span
-                        class="font-bold text-[13px] text-gray-900 dark:text-gray-100 truncate flex-1"
+                        class="flex-1 truncate font-mono text-[13px] font-semibold text-foreground"
                         :title="term.key"
                       >
                         {{ term.key || 'Untitled_Key' }}
@@ -2303,7 +2703,7 @@ function exportToExcel() {
                     />
                   </template>
                   <template v-else-if="term.description">
-                    <p class="text-[11px] text-gray-400 line-clamp-1 italic px-0.5 leading-tight truncate" :title="term.description">
+                    <p class="line-clamp-1 truncate px-0.5 text-[11px] leading-tight text-muted-foreground" :title="term.description">
                       {{ term.description }}
                     </p>
                   </template>
@@ -2315,7 +2715,7 @@ function exportToExcel() {
             <UiTableCell class="align-top p-3 text-center w-32" :class="{ 'bg-primary/[0.02]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
               <div class="flex justify-center pt-1">
                 <div
-                  class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium shadow-sm transition-all"
+                  class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors"
                   :class="[
                     term.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200' :
                     term.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' :
@@ -2323,8 +2723,7 @@ function exportToExcel() {
                     'bg-emerald-50 text-emerald-700 border-emerald-200'
                   ]"
                 >
-                  <span class="w-1.5 h-1.5 rounded-full animate-pulse" :class="getStatusColor(term.status)" v-if="term.status === 'pending' || term.status === 'review'"></span>
-                  <span class="w-1.5 h-1.5 rounded-full" :class="getStatusColor(term.status)" v-else></span>
+                  <span class="size-1.5 rounded-full" :class="getStatusColor(term.status)" />
                   {{ statusOptions.find(o => o.value === term.status)?.label }}
                 </div>
               </div>
@@ -2347,11 +2746,11 @@ function exportToExcel() {
                   <div
                     class="w-full min-h-[44px] p-1.5 text-xs break-words whitespace-pre-wrap rounded border border-transparent transition-colors group-hover/cell:bg-gray-50/80"
                     :class="[
-                      !term.translations[lang.code] ? 'text-gray-300 italic' : 'text-gray-700 dark:text-gray-300',
+                      !term.translations[lang.code] ? 'text-muted-foreground/55' : 'text-foreground/80',
                       hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive/40 bg-destructive/5 text-destructive dark:text-destructive' : ''
                     ]"
                   >
-                    {{ term.translations[lang.code] || 'Empty' }}
+                    {{ term.translations[lang.code] || '尚未填写' }}
                   </div>
                 </template>
                 <p v-if="hasTranslationPlaceholderMismatch(term, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
@@ -2379,16 +2778,20 @@ function exportToExcel() {
           <UiTableRow v-if="filteredTerms.length === 0 && !loadingTerms">
             <UiTableCell :colspan="targetLanguages.length + 6" class="h-[400px] text-center p-0 border-none hover:bg-transparent">
               <div class="flex flex-col items-center justify-center gap-4 text-muted-foreground">
-                <div class="size-16 rounded-full bg-gray-50 dark:bg-zinc-900 flex items-center justify-center">
-                  <Search class="size-8 opacity-20" />
+                <div class="flex size-14 items-center justify-center rounded-2xl border border-dashed bg-muted/40">
+                  <Search class="size-6 opacity-40" />
                 </div>
                 <div class="space-y-1">
-                  <p class="text-sm font-medium">暂无词条数据</p>
-                  <p class="text-xs opacity-60">尝试更改搜索词或新建一个词条</p>
+                  <p class="text-sm font-medium text-foreground">{{ terms.length === 0 ? '当前项目还没有词条' : '没有匹配的词条' }}</p>
+                  <p class="text-xs opacity-70">{{ terms.length === 0 ? '创建第一条词条，开始建立多语言内容。' : '调整关键词、模块或状态筛选后再试。' }}</p>
                 </div>
-                <UiButton variant="outline" size="sm" class="mt-2" @click="showAddTermModal = true">
+                <UiButton v-if="terms.length === 0 && (isAdmin || isDeveloper)" variant="outline" size="sm" class="mt-2" @click="showAddTermModal = true">
                   <Plus class="size-3.5 mr-1.5" />
                   新建词条
+                </UiButton>
+                <UiButton v-else-if="hasActiveFilters" variant="outline" size="sm" class="mt-2" @click="clearAllFilters">
+                  <X class="mr-1.5 size-3.5" />
+                  清除全部筛选
                 </UiButton>
               </div>
             </UiTableCell>
@@ -2397,7 +2800,7 @@ function exportToExcel() {
       </UiTable>
       </div>
 
-      <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-100 bg-white px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-4 py-3 text-sm">
         <div class="text-xs text-muted-foreground">
           共 {{ filteredTerms.length }} 条
           <template v-if="filteredTerms.length > 0">
@@ -2423,21 +2826,21 @@ function exportToExcel() {
             </UiSelect>
           </div>
 
-          <div class="min-w-[88px] text-center text-xs font-medium text-muted-foreground">
+          <div class="min-w-[88px] text-center text-xs font-medium text-muted-foreground" aria-live="polite">
             第 {{ currentPage }} / {{ totalPages }} 页
           </div>
 
           <div class="flex items-center gap-1">
-            <UiButton variant="outline" size="icon" class="h-8 w-8" :disabled="currentPage === 1" @click="goToFirstPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="第一页" :disabled="currentPage === 1" @click="goToFirstPage">
               <ChevronsLeft class="h-4 w-4" />
             </UiButton>
-            <UiButton variant="outline" size="icon" class="h-8 w-8" :disabled="currentPage === 1" @click="goToPreviousPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="上一页" :disabled="currentPage === 1" @click="goToPreviousPage">
               <ChevronLeft class="h-4 w-4" />
             </UiButton>
-            <UiButton variant="outline" size="icon" class="h-8 w-8" :disabled="currentPage === totalPages" @click="goToNextPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="下一页" :disabled="currentPage === totalPages" @click="goToNextPage">
               <ChevronRight class="h-4 w-4" />
             </UiButton>
-            <UiButton variant="outline" size="icon" class="h-8 w-8" :disabled="currentPage === totalPages" @click="goToLastPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="最后一页" :disabled="currentPage === totalPages" @click="goToLastPage">
               <ChevronsRight class="h-4 w-4" />
             </UiButton>
           </div>
@@ -2445,40 +2848,167 @@ function exportToExcel() {
       </div>
 
       <!-- 绝对定位的 Empty / Loading 覆盖层，始终在视口水平居中，无视表格向右滚动 -->
-      <div v-if="loadingTerms" class="absolute inset-0 top-[40px] flex items-center justify-center bg-white/70 dark:bg-zinc-950/70 backdrop-blur-[1px] z-20">
-        <div class="flex flex-col items-center justify-center gap-3 text-muted-foreground p-6 rounded-lg bg-white shadow-sm border border-gray-100 dark:bg-zinc-900 dark:border-zinc-800">
+      <div v-if="loadingTerms" class="absolute inset-0 top-[40px] z-20 flex items-center justify-center bg-card/75 backdrop-blur-[1px]" role="status" aria-live="polite">
+        <div class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-card p-6 text-muted-foreground shadow-lg">
           <Loader2 class="size-8 animate-spin text-primary" />
           <p class="text-sm font-medium">正在加载词条数据...</p>
         </div>
       </div>
 
-
-    </div>
+    </section>
 
     <!-- 快捷批量创建模态框 -->
-    <UiDialog :open="showBatchAddModal" @update:open="val => showBatchAddModal = val">
-      <UiDialogContent class="sm:max-w-2xl">
+    <UiDialog :open="showBatchAddModal" @update:open="handleBatchAddOpenChange">
+      <UiDialogContent class="flex max-h-[90svh] flex-col sm:max-w-5xl">
         <UiDialogHeader>
-          <UiDialogTitle>快捷批量创建词条</UiDialogTitle>
+          <UiDialogTitle>
+            {{ batchAddStep === 'input' ? '快捷批量创建词条' : '预览并补全词条' }}
+          </UiDialogTitle>
           <UiDialogDescription>
-            每行输入一个你要翻译的文本内容。如果包含中文字符，将自动填入“中文”列；否则将填入“Key”列。
+            <template v-if="batchAddStep === 'input'">
+              每行输入一条原文，也可以使用“Key | 原文”格式同时填写 Key。
+            </template>
+            <template v-else>
+              创建前请补全必填信息并处理重复项。创建成功后将直接返回正常列表。
+            </template>
           </UiDialogDescription>
         </UiDialogHeader>
 
-        <div class="py-4">
-          <UiLabel class="mb-2 block text-gray-500 text-xs">粘贴你的清单，一行一条：</UiLabel>
-          <UiTextarea
-            v-model="batchAddText"
-            placeholder="例如：
-确认删除吗？
-Please confirm your action"
-            class="min-ih-[260px] font-mono text-sm p-4 leading-relaxed bg-gray-50/50 dark:bg-zinc-900/50"
-          />
+        <div v-if="batchAddStep === 'input'" class="min-h-0 space-y-4 overflow-y-auto py-4">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="space-y-2">
+              <UiLabel for="batch-source-language">原文语言</UiLabel>
+              <UiSelect v-model="batchSourceLangCode">
+                <UiSelectTrigger id="batch-source-language">
+                  <UiSelectValue placeholder="选择原文语言" />
+                </UiSelectTrigger>
+                <UiSelectContent>
+                  <UiSelectItem v-for="lang in targetLanguages" :key="lang.code" :value="lang.code">
+                    {{ lang.name }}（{{ lang.code }}）
+                  </UiSelectItem>
+                </UiSelectContent>
+              </UiSelect>
+            </div>
+            <div class="space-y-2">
+              <UiLabel for="batch-default-module">默认模块（可选）</UiLabel>
+              <UiInput id="batch-default-module" v-model="batchDefaultModule" maxlength="100" placeholder="例如：common、auth" />
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <UiLabel for="batch-create-content">粘贴清单，一行一条</UiLabel>
+            <UiTextarea
+              id="batch-create-content"
+              v-model="batchAddText"
+              placeholder="confirm_delete | 确认删除吗？&#10;save_success | 保存成功&#10;网络连接失败"
+              class="min-h-[260px] resize-none font-mono text-sm leading-relaxed"
+              :aria-invalid="Boolean(batchAddError)"
+              aria-describedby="batch-create-help batch-create-error"
+            />
+            <div id="batch-create-help" class="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+              <span>没有提供 Key 的内容可在下一步补全。</span>
+              <span>单次最多 {{ BATCH_CREATE_LIMIT }} 条</span>
+            </div>
+          </div>
         </div>
 
-        <UiDialogFooter>
-          <UiButton variant="outline" @click="showBatchAddModal = false">取消</UiButton>
-          <UiButton @click="confirmBatchAdd" :disabled="!batchAddText.trim()">确认并创建</UiButton>
+        <div v-else class="min-h-0 flex-1 space-y-3 overflow-hidden py-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>共 {{ batchCreateRows.length }} 条，{{ validBatchCreateCount }} 条可以创建</span>
+            <span v-if="batchRowErrors.size" class="text-destructive">{{ batchRowErrors.size }} 条需要处理</span>
+          </div>
+
+          <div class="max-h-[55svh] overflow-auto rounded-lg border">
+            <UiTable>
+              <UiTableHeader class="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+                <UiTableRow>
+                  <UiTableHead class="w-12 text-center">#</UiTableHead>
+                  <UiTableHead class="min-w-[220px]">Key</UiTableHead>
+                  <UiTableHead class="min-w-[150px]">模块</UiTableHead>
+                  <UiTableHead class="min-w-[260px]">{{ targetLanguages.find(lang => lang.code === batchSourceLangCode)?.name || '原文' }}</UiTableHead>
+                  <UiTableHead class="min-w-[200px]">描述（可选）</UiTableHead>
+                  <UiTableHead class="min-w-[200px]">检查结果</UiTableHead>
+                  <UiTableHead class="w-16"><span class="sr-only">操作</span></UiTableHead>
+                </UiTableRow>
+              </UiTableHeader>
+              <UiTableBody>
+                <UiTableRow v-for="(row, index) in batchCreateRows" :key="row.clientId">
+                  <UiTableCell class="text-center text-xs text-muted-foreground">{{ index + 1 }}</UiTableCell>
+                  <UiTableCell>
+                    <UiInput
+                      v-model="row.key"
+                      maxlength="255"
+                      class="font-mono"
+                      placeholder="必填，例如 confirm_delete"
+                      :aria-label="`第 ${index + 1} 条 Key`"
+                      :aria-invalid="batchRowErrors.has(row.clientId)"
+                    />
+                  </UiTableCell>
+                  <UiTableCell>
+                    <UiInput v-model="row.module" maxlength="100" placeholder="可选" :aria-label="`第 ${index + 1} 条模块`" />
+                  </UiTableCell>
+                  <UiTableCell>
+                    <UiTextarea
+                      v-model="row.sourceText"
+                      rows="2"
+                      class="min-h-16 resize-none"
+                      :aria-label="`第 ${index + 1} 条原文`"
+                      :aria-invalid="batchRowErrors.has(row.clientId)"
+                    />
+                  </UiTableCell>
+                  <UiTableCell>
+                    <UiTextarea
+                      v-model="row.description"
+                      rows="2"
+                      class="min-h-16 resize-none"
+                      placeholder="使用场景或上下文"
+                      :aria-label="`第 ${index + 1} 条描述`"
+                    />
+                  </UiTableCell>
+                  <UiTableCell>
+                    <span v-if="batchRowErrors.get(row.clientId)" class="text-xs text-destructive">
+                      {{ batchRowErrors.get(row.clientId) }}
+                    </span>
+                    <span v-else class="text-xs text-emerald-600 dark:text-emerald-400">可以创建</span>
+                  </UiTableCell>
+                  <UiTableCell>
+                    <UiButton
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      :aria-label="`移除第 ${index + 1} 条`"
+                      :disabled="isBatchCreatingTerms"
+                      @click="removeBatchCreateRow(row.clientId)"
+                    >
+                      <Trash2 class="h-4 w-4" />
+                    </UiButton>
+                  </UiTableCell>
+                </UiTableRow>
+              </UiTableBody>
+            </UiTable>
+          </div>
+        </div>
+
+        <p v-if="batchAddError" id="batch-create-error" role="alert" class="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {{ batchAddError }}
+        </p>
+
+        <UiDialogFooter class="shrink-0">
+          <template v-if="batchAddStep === 'input'">
+            <UiButton variant="outline" :disabled="isBatchCreatingTerms" @click="handleBatchAddOpenChange(false)">取消</UiButton>
+            <UiButton :disabled="!batchAddText.trim() || !batchSourceLangCode" @click="confirmBatchAdd">下一步：预览</UiButton>
+          </template>
+          <template v-else>
+            <UiButton variant="outline" :disabled="isBatchCreatingTerms" @click="batchAddStep = 'input'">返回修改</UiButton>
+            <UiButton
+              :disabled="isBatchCreatingTerms || batchCreateRows.length === 0 || batchRowErrors.size > 0"
+              @click="submitBatchCreate"
+            >
+              <Loader2 v-if="isBatchCreatingTerms" class="mr-2 h-4 w-4 animate-spin" />
+              {{ isBatchCreatingTerms ? `正在创建 ${batchCreateRows.length} 个词条` : `创建 ${validBatchCreateCount} 个词条` }}
+            </UiButton>
+          </template>
         </UiDialogFooter>
       </UiDialogContent>
     </UiDialog>
@@ -2755,7 +3285,7 @@ Please confirm your action"
         <UiDialogHeader>
           <UiDialogTitle>导出多语言 JSON</UiDialogTitle>
           <UiDialogDescription>
-            请选择要导出的语言简码（将为每个选中的语言生成一个 JSON 文件）。
+            请选择要导出的语言。每种语言生成一个 JSON 文件，并统一打包为 ZIP 下载。
           </UiDialogDescription>
         </UiDialogHeader>
 
@@ -2804,9 +3334,14 @@ Please confirm your action"
         </div>
 
         <UiDialogFooter>
-          <UiButton variant="outline" @click="closeExportModal">取消</UiButton>
-          <UiButton @click="confirmExport" class="bg-green-600 hover:bg-green-700 text-white">
-            确认导出 ({{ selectedExportLangs.length }})
+          <UiButton variant="outline" :disabled="isExportingJson" @click="closeExportModal">取消</UiButton>
+          <UiButton
+            class="bg-green-600 text-white hover:bg-green-700"
+            :disabled="isExportingJson || selectedExportLangs.length === 0"
+            @click="confirmExport"
+          >
+            <Loader2 v-if="isExportingJson" class="mr-2 size-4 animate-spin" />
+            {{ isExportingJson ? '正在打包…' : `打包下载 (${selectedExportLangs.length})` }}
           </UiButton>
         </UiDialogFooter>
       </UiDialogContent>

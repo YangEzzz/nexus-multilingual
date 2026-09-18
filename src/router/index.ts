@@ -38,6 +38,11 @@ const baseRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/Projects/index.vue'),
       },
       {
+        path: '/languages',
+        name: 'available-languages',
+        component: () => import('@/views/Languages/index.vue'),
+      },
+      {
         path: '/project-logs',
         name: 'project-logs',
         component: () => import('@/views/Workbench/Logs.vue'),

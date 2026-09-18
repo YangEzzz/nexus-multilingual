@@ -48,9 +48,12 @@ interface DashboardLanguage {
 }
 
 interface DashboardLog {
-  id: number
+  id: number | string
+  scope?: 'term' | 'project'
   action: string
   created_at: string
+  item_count?: number
+  term_keys?: string[]
   term?: {
     key: string
     module: string
@@ -249,7 +252,7 @@ onMounted(loadProjects)
 </script>
 
 <template>
-  <div class="min-h-0 space-y-6 p-2">
+  <div class="min-h-0 space-y-6 p-4 lg:p-6">
     <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight text-foreground">仪表盘</h1>
@@ -625,11 +628,16 @@ onMounted(loadProjects)
                   <div class="min-w-0">
                     <p class="text-sm leading-6 text-foreground">
                       <span class="font-medium">{{ log.user?.nickname || '系统' }}</span>
-                      <span class="mx-1 text-muted-foreground">{{ log.action }}</span>
-                      <span class="font-mono text-primary">{{ log.term?.key || '未知词条' }}</span>
+                      <span class="mx-1 text-muted-foreground">
+                        {{ log.scope === 'project' ? `批量创建了 ${log.item_count || 1} 个词条` : log.action }}
+                      </span>
+                      <span v-if="log.scope === 'project'" class="font-mono text-primary">
+                        {{ log.term_keys?.slice(0, 3).join('、') || '批量词条' }}
+                      </span>
+                      <span v-else class="font-mono text-primary">{{ log.term?.key || '未知词条' }}</span>
                     </p>
                     <p class="mt-1 text-xs text-muted-foreground">
-                      {{ log.term?.module ? `${log.term.module} / ` : '' }}{{ formatDate(log.created_at) }}
+                      {{ log.scope === 'project' ? '项目级操作 / ' : (log.term?.module ? `${log.term.module} / ` : '') }}{{ formatDate(log.created_at) }}
                     </p>
                   </div>
                   <span class="shrink-0 text-xs text-muted-foreground">{{ formatRelativeTime(log.created_at) }}</span>

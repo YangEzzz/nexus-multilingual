@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 defineOptions({ name: 'projects' })
 
 import { Plus, Folder, Trash2, Pencil, ArrowRight, Loader2 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { fetchAvailableLanguages } from '@/lib/available-languages'
 import { api } from '@/request'
 
 interface I18nProject {
@@ -18,30 +19,12 @@ interface I18nProject {
   languages?: Array<{ code: string; name: string }>
 }
 
-// All supported languages (global dictionary)
-const ALL_LANGUAGES = [
-  { code: 'cn', name: '简体中文' },
-  { code: 'cht', name: '繁体中文' },
-  { code: 'en', name: '英文' },
-  { code: 'jp', name: '日语' },
-  { code: 'pt', name: '葡萄牙语' },
-  { code: 'es', name: '西班牙语' },
-  { code: 'ru', name: '俄语' },
-  { code: 'de', name: '德语' },
-  { code: 'fr', name: '法语' },
-  { code: 'ko', name: '韩语' },
-  { code: 'th', name: '泰语' },
-  { code: 'vi', name: '越南语' },
-  { code: 'ind', name: '印尼语' },
-  { code: 'tr', name: '土耳其语' },
-  { code: 'bn', name: '孟加拉语' },
-  { code: 'pl', name: '波兰语' },
-  { code: 'it', name: '意大利语' },
-]
-
 const router = useRouter()
 const projects = ref<I18nProject[]>([])
 const loading = ref(true)
+const availableLanguages = ref<Array<{ code: string; name: string }>>([])
+const languagesLoading = ref(false)
+const languagesError = ref('')
 
 // Dialog state
 const showDialog = ref(false)
@@ -66,6 +49,20 @@ async function loadProjects() {
   }
 }
 
+async function loadAvailableLanguages() {
+  languagesLoading.value = true
+  languagesError.value = ''
+  try {
+    availableLanguages.value = await fetchAvailableLanguages()
+  }
+  catch (e: any) {
+    languagesError.value = e.message || '无法获取可选语言'
+  }
+  finally {
+    languagesLoading.value = false
+  }
+}
+
 function toggleLang(code: string) {
   const idx = selectedLangCodes.value.indexOf(code)
   if (idx === -1) selectedLangCodes.value.push(code)
@@ -75,7 +72,7 @@ function toggleLang(code: string) {
 function openCreate() {
   isEditing.value = false
   formData.value = { id: 0, name: '', code: '', description: '' }
-  selectedLangCodes.value = ALL_LANGUAGES.map(l => l.code)
+  selectedLangCodes.value = availableLanguages.value.map(lang => lang.code)
   showDialog.value = true
 }
 
@@ -86,7 +83,7 @@ function openEdit(project: I18nProject) {
   showDialog.value = true
 }
 async function saveLanguages(projectId: number) {
-  const langs = ALL_LANGUAGES.filter(l => selectedLangCodes.value.includes(l.code))
+  const langs = availableLanguages.value.filter(lang => selectedLangCodes.value.includes(lang.code))
   await api.post({ url: `/projects/${projectId}/languages/update`, data: langs })
 }
 
@@ -144,7 +141,7 @@ function enterWorkbench(project: I18nProject) {
   router.push(`/workbench?project=${project.id}`)
 }
 
-onMounted(loadProjects)
+onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
 </script>
 
 <template>
@@ -270,14 +267,25 @@ onMounted(loadProjects)
             <div class="flex items-center justify-between">
               <UiLabel>目标语言 * <span class="text-muted-foreground font-normal text-xs ml-1">（已选 {{ selectedLangCodes.length }} 种）</span></UiLabel>
               <div class="flex items-center gap-2">
-                <button type="button" @click="selectedLangCodes = ALL_LANGUAGES.map(l => l.code)" class="text-[10px] text-primary hover:underline">全选</button>
+                <button type="button" class="text-[10px] text-primary hover:underline" @click="selectedLangCodes = availableLanguages.map(lang => lang.code)">全选</button>
                 <span class="text-[10px] text-muted-foreground opacity-30">|</span>
-                <button type="button" @click="selectedLangCodes = []" class="text-[10px] text-muted-foreground hover:text-primary hover:underline">清空</button>
+                <button type="button" class="text-[10px] text-muted-foreground hover:text-primary hover:underline" @click="selectedLangCodes = []">清空</button>
               </div>
             </div>
-            <div class="grid grid-cols-3 gap-1.5 p-3 border rounded-lg bg-muted/30">
+            <div v-if="languagesLoading" class="flex min-h-24 items-center justify-center rounded-lg border bg-muted/20" role="status">
+              <Loader2 class="size-5 animate-spin text-muted-foreground" />
+              <span class="ml-2 text-sm text-muted-foreground">正在加载可选语言</span>
+            </div>
+            <div v-else-if="languagesError" class="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">
+              <p>{{ languagesError }}</p>
+              <UiButton type="button" variant="outline" size="sm" class="mt-2" @click="loadAvailableLanguages">重试</UiButton>
+            </div>
+            <div v-else-if="availableLanguages.length === 0" class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              还没有可选语言，请先到“可选语言”页面添加。
+            </div>
+            <div v-else class="grid grid-cols-3 gap-1.5 p-3 border rounded-lg bg-muted/30">
               <label
-                v-for="lang in ALL_LANGUAGES"
+                v-for="lang in availableLanguages"
                 :key="lang.code"
                 class="flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors"
                 :class="{ 'bg-primary/10 text-primary font-medium': selectedLangCodes.includes(lang.code) }"
@@ -299,7 +307,7 @@ onMounted(loadProjects)
         </div>
         <UiDialogFooter>
           <UiButton variant="outline" @click="showDialog = false">取消</UiButton>
-          <UiButton :disabled="submitting" @click="submitForm">
+          <UiButton :disabled="submitting || languagesLoading || availableLanguages.length === 0" @click="submitForm">
             <Loader2 v-if="submitting" class="size-4 mr-2 animate-spin" />
             {{ isEditing ? '保存' : '创建' }}
           </UiButton>

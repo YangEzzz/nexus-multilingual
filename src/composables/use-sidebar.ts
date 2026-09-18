@@ -1,6 +1,6 @@
 import type { NavGroup } from '@/components/app-sidebar/types'
 
-import { BellDot, FolderOpen, LayoutDashboard, Languages, Palette, PictureInPicture2, User, Wrench } from 'lucide-vue-next'
+import { BellDot, BookOpenText, FolderOpen, Languages, LayoutDashboard, Palette, PictureInPicture2, User, Wrench } from 'lucide-vue-next'
 
 export const useSidebar = () => {
   const settingsNavItems = [
@@ -18,6 +18,7 @@ export const useSidebar = () => {
         { title: '项目总览', url: '/dashboard', icon: LayoutDashboard },
         { title: '项目管理', url: '/projects', icon: FolderOpen },
         { title: '多语言工作台', url: '/workbench', icon: Languages },
+        { title: '可选语言', url: '/languages', icon: BookOpenText },
       ],
     },
   ])

@@ -1,50 +1,188 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import {
+  Activity,
+  ArrowLeft,
+  Clock3,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Send,
+  Trash2,
+  User as UserIcon,
+  Wand2,
+} from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Clock, User as UserIcon, Activity } from 'lucide-vue-next'
-import { api } from '@/request'
 import { toast } from 'vue-sonner'
+import { api } from '@/request'
 
-defineOptions({ name: 'project-logs' })
-
+defineOptions({ name: 'ProjectLogs' })
 
 const route = useRoute()
 const router = useRouter()
 const projectId = computed(() => route.query.project as string)
 
 interface LogItem {
-  id: number
-  term_id: number
+  id: number | string
+  scope?: 'term' | 'project'
+  term_id?: number
   user_id: number
   action: string
   created_at: string
-  term: {
+  item_count?: number
+  term_keys?: string[]
+  term?: {
     key: string
     module: string
   }
-  user: {
+  user?: {
     nickname: string
     avatar_url: string
   }
 }
 
+interface DisplayLogItem extends LogItem {
+  batch_count: number
+  batch_terms: Array<{
+    key: string
+    module: string
+  }>
+  batch_last_at: string
+}
+
+const BATCH_CREATE_ACTION = '通过快捷批量创建录入'
+const BATCH_LOG_WINDOW_MS = 5000
+
 const logs = ref<LogItem[]>([])
 const loading = ref(true)
+const loadError = ref('')
 
-async function fetchLogs() {
-  if (!projectId.value) return
+const groupedLogs = computed<DisplayLogItem[]>(() => {
+  const result: DisplayLogItem[] = []
+
+  for (const log of logs.value) {
+    if (log.scope === 'project' && log.action === BATCH_CREATE_ACTION) {
+      result.push({
+        ...log,
+        batch_count: log.item_count || 1,
+        batch_terms: (log.term_keys || []).map(key => ({ key, module: '' })),
+        batch_last_at: log.created_at,
+      })
+      continue
+    }
+
+    const previous = result[result.length - 1]
+    const canMergeBatch = log.action === BATCH_CREATE_ACTION
+      && previous?.action === BATCH_CREATE_ACTION
+      && previous.scope !== 'project'
+      && previous.user_id === log.user_id
+      && Math.abs(new Date(previous.batch_last_at).getTime() - new Date(log.created_at).getTime()) <= BATCH_LOG_WINDOW_MS
+
+    if (canMergeBatch) {
+      previous.batch_count += 1
+      previous.batch_last_at = log.created_at
+      if (log.term)
+        previous.batch_terms.push(log.term)
+      continue
+    }
+
+    result.push({
+      ...log,
+      batch_count: 1,
+      batch_terms: log.term ? [log.term] : [],
+      batch_last_at: log.created_at,
+    })
+  }
+
+  return result
+})
+
+const visibleLogCount = computed(() => groupedLogs.value.length)
+
+const isBatchLog = (log: DisplayLogItem) => {
+  return log.action === BATCH_CREATE_ACTION
+}
+
+const getBatchTermSummary = (log: DisplayLogItem) => {
+  const visibleKeys = log.batch_terms.slice(0, 3).map(term => term.key).filter(Boolean)
+  if (visibleKeys.length === 0)
+    return `共 ${log.batch_count} 个词条`
+
+  const suffix = log.batch_count > visibleKeys.length ? ` 等 ${log.batch_count} 个词条` : ''
+  return `${visibleKeys.join('、')}${suffix}`
+}
+
+const getActionIcon = (action: string) => {
+  if (action.includes('删除'))
+    return Trash2
+  if (action.includes('发布'))
+    return Send
+  if (action.includes('创建') || action.includes('录入'))
+    return Plus
+  if (action.includes('AI') || action.includes('翻译'))
+    return Wand2
+  if (action.includes('编辑') || action.includes('更新') || action.includes('修改'))
+    return Pencil
+  return Activity
+}
+
+const getActionTone = (action: string) => {
+  if (action.includes('删除'))
+    return 'bg-destructive/10 text-destructive'
+  if (action.includes('发布'))
+    return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+  if (action.includes('创建') || action.includes('录入'))
+    return 'bg-sky-500/10 text-sky-700 dark:text-sky-300'
+  if (action.includes('AI') || action.includes('翻译'))
+    return 'bg-violet-500/10 text-violet-700 dark:text-violet-300'
+  return 'bg-muted text-muted-foreground'
+}
+
+const getActionText = (log: DisplayLogItem) => {
+  if (isBatchLog(log))
+    return `批量创建了 ${log.batch_count} 个词条`
+  return log.action
+}
+
+const fetchLogs = async () => {
+  if (!projectId.value)
+    return
+
   loading.value = true
+  loadError.value = ''
   try {
     const res = await api.get({ url: `/projects/${projectId.value}/logs` })
     logs.value = (res.data as LogItem[]) || []
-  } catch (err: any) {
-    toast.error('获取日志失败', { description: err.message })
-  } finally {
+  }
+  catch {
+    loadError.value = '操作日志暂时无法加载，请检查网络后重试。'
+    toast.error('获取日志失败', { description: '请稍后重试。' })
+  }
+  finally {
     loading.value = false
   }
 }
 
+const goBack = () => {
+  router.back()
+}
+
+const formatTime = (isoStr: string) => {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(isoStr))
+}
+
 onMounted(() => {
+  document.title = '操作日志 — Nexus Multilingual'
   if (!projectId.value) {
     toast.error('缺少项目 ID')
     router.back()
@@ -52,101 +190,137 @@ onMounted(() => {
   }
   fetchLogs()
 })
-
-function goBack() {
-  router.back()
-}
-
-// 格式化时间
-function formatTime(isoStr: string) {
-  const date = new Date(isoStr)
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
-  }).format(date)
-}
 </script>
 
 <template>
-  <div class="h-[calc(100vh-120px)] flex flex-col max-w-5xl mx-auto w-full">
-    <!-- Header -->
-    <header class="flex items-center justify-between pb-6 mb-6 border-b border-gray-100 dark:border-zinc-800 shrink-0 mt-4">
-      <div class="flex items-center gap-4">
-        <UiButton variant="ghost" size="icon" @click="goBack" class="rounded-full w-8 h-8">
-          <ArrowLeft class="w-4 h-4" />
+  <div class="min-h-0 space-y-6 p-4 lg:p-6">
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex min-w-0 items-start gap-3">
+        <UiButton variant="ghost" size="icon" class="mt-0.5 shrink-0" aria-label="返回词条工作台" @click="goBack">
+          <ArrowLeft class="size-4" />
         </UiButton>
-        <div>
-          <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            项目操作日志
+        <div class="min-w-0">
+          <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+            操作日志
           </h1>
-          <p class="text-sm text-gray-500 mt-1">这里记录了项目中所有的内容修改、发布与删除动作（仅管理员可见）。</p>
+          <p class="mt-1 text-sm text-muted-foreground">
+            查看当前项目的词条变更、发布和批量操作记录
+          </p>
         </div>
       </div>
-      <UiButton variant="outline" size="sm" @click="fetchLogs" :disabled="loading">
-        刷新
-      </UiButton>
+
+      <div class="flex items-center gap-3 pl-12 sm:pl-0">
+        <span class="text-sm text-muted-foreground">共 {{ visibleLogCount }} 条</span>
+        <UiButton variant="outline" size="sm" :disabled="loading" :aria-busy="loading" @click="fetchLogs">
+          <RefreshCw class="mr-2 size-4" :class="{ 'animate-spin': loading }" />
+          {{ loading ? '刷新中' : '刷新' }}
+        </UiButton>
+      </div>
     </header>
 
-    <!-- Loading State -->
-    <div v-if="loading" class="flex-1 flex flex-col py-20 items-center justify-center text-gray-400">
-      <Clock class="w-8 h-8 animate-pulse mb-4 text-primary/40" />
-      <span class="text-sm">正在加载全量日志数据...</span>
-    </div>
-
-    <!-- Empty State -->
-    <div v-else-if="logs.length === 0" class="flex-1 flex flex-col py-20 items-center justify-center text-gray-400 border-2 border-dashed border-gray-100 dark:border-zinc-800 rounded-xl bg-gray-50/50 dark:bg-zinc-900/20">
-      <Activity class="w-10 h-10 mb-4 text-gray-300" />
-      <span class="text-sm text-gray-500">该项目暂无任何操作记录</span>
-    </div>
-
-    <!-- Timeline -->
-    <div v-else class="flex-1 overflow-auto pr-4">
-      <div class="relative py-4 pl-6 before:absolute before:inset-y-0 before:left-[19px] before:w-[2px] before:bg-gradient-to-b before:from-gray-200 before:via-gray-200 before:to-transparent dark:before:from-zinc-800 dark:before:via-zinc-800">
-        <div v-for="log in logs" :key="log.id" class="relative mb-8 last:mb-0">
-          <span class="absolute -left-6 top-1.5 w-3 h-3 bg-white dark:bg-zinc-950 border-[2px] border-primary rounded-full z-10 shadow-sm shadow-primary/20"></span>
-          
-          <div class="bg-white dark:bg-zinc-900 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-zinc-800 flex gap-4 transition-all hover:shadow-md hover:border-gray-200 dark:hover:border-zinc-700">
-            <!-- User Avatar & Info -->
-            <div class="shrink-0 flex flex-col items-center gap-1.5 w-16">
-              <UiAvatar class="w-10 h-10 border border-gray-100 dark:border-zinc-800 shadow-sm">
-                <UiAvatarImage :src="log.user?.avatar_url || ''" />
-                <UiAvatarFallback class="bg-primary/5 text-primary text-xs font-semibold">
-                  <UserIcon class="w-4 h-4" v-if="!log.user?.nickname" />
-                  <span v-else>{{ log.user?.nickname.charAt(0).toUpperCase() }}</span>
-                </UiAvatarFallback>
-              </UiAvatar>
-            </div>
-
-            <!-- Action Content -->
-            <div class="flex-1 min-w-0 flex flex-col">
-              <div class="flex items-center justify-between gap-4 mb-2">
-                <div class="flex items-center gap-2 text-sm flex-wrap">
-                  <span class="font-bold text-gray-900 dark:text-gray-100">
-                    {{ log.user?.nickname || '系统 / 未知用户' }}
-                  </span>
-                  <span class="text-gray-600 dark:text-gray-400">
-                    {{ log.action }}
-                  </span>
-                </div>
-                <div class="shrink-0 text-xs font-medium text-gray-400 flex items-center gap-1">
-                  <Clock class="w-3 h-3" />
-                  {{ formatTime(log.created_at) }}
-                </div>
-              </div>
-
-              <!-- Term Info Panel -->
-              <div class="mt-1 bg-gray-50 dark:bg-zinc-950 rounded-md p-2.5 border border-gray-100/50 dark:border-zinc-800/50 flex items-center gap-2">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-primary/80 bg-primary/10 px-1.5 py-0.5 rounded shrink-0" v-if="log.term?.module">
-                  {{ log.term.module }}
-                </span>
-                <span class="font-bold text-xs text-gray-700 dark:text-gray-300 font-mono truncate" :title="log.term?.key || 'Deleted Term'">
-                  {{ log.term?.key || '该词条可能已被删除' }}
-                </span>
-                <span v-if="log.term_id" class="ml-auto text-[10px] text-gray-400 font-mono">ID: {{ log.term_id }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+    <main class="min-h-[30rem] overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <div v-if="loading" class="flex min-h-[24rem] flex-col items-center justify-center px-6 text-center" role="status" aria-live="polite">
+        <span class="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Loader2 class="size-5 animate-spin" />
+        </span>
+        <p class="mt-3 text-sm font-medium text-foreground">
+          正在加载操作日志
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          正在同步该项目的最新记录…
+        </p>
       </div>
-    </div>
+
+      <div v-else-if="loadError" class="flex min-h-[24rem] flex-col items-center justify-center px-6 text-center">
+        <span class="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+          <Activity class="size-5" />
+        </span>
+        <p class="mt-3 text-sm font-medium text-foreground">
+          加载失败
+        </p>
+        <p class="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
+          {{ loadError }}
+        </p>
+        <UiButton variant="outline" class="mt-4" @click="fetchLogs">
+          <RefreshCw class="mr-2 size-4" />
+          重试
+        </UiButton>
+      </div>
+
+      <UiEmpty v-else-if="groupedLogs.length === 0" class="min-h-[24rem] border-0">
+        <UiEmptyHeader>
+          <UiEmptyMedia variant="icon">
+            <Activity />
+          </UiEmptyMedia>
+          <UiEmptyTitle>暂无操作记录</UiEmptyTitle>
+          <UiEmptyDescription>
+            项目内的词条变更、发布和批量操作会显示在这里
+          </UiEmptyDescription>
+        </UiEmptyHeader>
+      </UiEmpty>
+
+      <template v-else>
+        <div
+          class="hidden grid-cols-[2.5rem_minmax(0,1fr)_auto] gap-3 border-b border-border bg-muted/30 px-5 py-3 text-xs font-medium text-muted-foreground sm:grid"
+          aria-hidden="true"
+        >
+          <span />
+          <span>操作记录</span>
+          <span>操作时间</span>
+        </div>
+
+        <ol class="divide-y divide-border/70">
+          <li v-for="log in groupedLogs" :key="log.id" class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-3 px-4 py-4 transition-colors hover:bg-muted/30 sm:grid-cols-[2.5rem_minmax(0,1fr)_auto] lg:px-5">
+            <span class="flex size-9 items-center justify-center rounded-lg" :class="getActionTone(log.action)" aria-hidden="true">
+              <component :is="getActionIcon(log.action)" class="size-4" />
+            </span>
+
+            <div class="min-w-0">
+              <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <UiAvatar class="size-6 shrink-0 border border-border">
+                  <UiAvatarImage v-if="log.user?.avatar_url" :src="log.user.avatar_url" />
+                  <UiAvatarFallback class="text-[10px]">
+                    <UserIcon v-if="!log.user?.nickname" class="size-3" />
+                    <template v-else>
+                      {{ log.user.nickname.slice(0, 1) }}
+                    </template>
+                  </UiAvatarFallback>
+                </UiAvatar>
+                <span class="font-medium text-foreground">{{ log.user?.nickname || '系统 / 未知用户' }}</span>
+                <span class="text-muted-foreground">{{ getActionText(log) }}</span>
+              </div>
+
+              <div v-if="isBatchLog(log)" class="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+                <span class="rounded-md border border-border bg-muted/60 px-2 py-1 text-xs font-medium text-foreground">
+                  批量 · {{ log.batch_count }}
+                </span>
+                <span class="min-w-0 truncate font-mono text-xs text-muted-foreground" :title="log.batch_terms.map(term => term.key).join('、')">
+                  {{ getBatchTermSummary(log) }}
+                </span>
+              </div>
+
+              <div v-else-if="log.term" class="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+                <span class="truncate font-mono text-xs font-semibold text-foreground">
+                  {{ log.term.key }}
+                </span>
+                <span class="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {{ log.term.module || '无模块' }}
+                </span>
+                <span class="font-mono text-[10px] text-muted-foreground/70">#{{ log.term_id }}</span>
+              </div>
+
+              <p v-else class="mt-2 text-xs text-muted-foreground">
+                该词条可能已被删除
+              </p>
+            </div>
+
+            <time class="col-start-2 flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums text-muted-foreground sm:col-start-auto sm:pt-1" :datetime="log.created_at">
+              <Clock3 class="size-3.5" aria-hidden="true" />
+              {{ formatTime(log.created_at) }}
+            </time>
+          </li>
+        </ol>
+      </template>
+    </main>
   </div>
 </template>
