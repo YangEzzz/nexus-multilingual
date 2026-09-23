@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
+import { isLoggedIn } from '@/utils/auth'
 
 // 定义公共路由（不需要登录即可访问）
 // const publicRoutes = ['/login', '/register', '/404']
@@ -46,6 +47,11 @@ const baseRoutes: RouteRecordRaw[] = [
         path: '/project-logs',
         name: 'project-logs',
         component: () => import('@/views/Workbench/Logs.vue'),
+      },
+      {
+        path: '/ai-settings',
+        name: 'ai-settings',
+        component: () => import('@/views/AISettings/index.vue'),
       },
     ],
   },
@@ -112,7 +118,6 @@ const baseRoutes: RouteRecordRaw[] = [
     ],
   },
 ]
-import { isLoggedIn } from '@/utils/auth'
 
 const publicRoutes = ['/auth/sign-in', '/auth/sign-in-2', '/auth/sign-up', '/auth/forgot-password', '/auth/otp', '/errors/401', '/errors/403', '/errors/404', '/errors/500', '/errors/503']
 
@@ -135,10 +140,12 @@ router.beforeEach(async (to, _, next) => {
       path: '/auth/sign-in',
       query: { redirect: to.fullPath }, // 保存原目标路径，以便登录后重定向
     })
-  } else if (to.path.startsWith('/auth/') && isLoggedIn()) {
+  }
+  else if (to.path.startsWith('/auth/') && isLoggedIn()) {
     // 已经登录的情况下，又跑回登录页/认证页的话，重定向到首页
     next({ path: '/' })
-  } else {
+  }
+  else {
     // 正常放行
     next()
   }

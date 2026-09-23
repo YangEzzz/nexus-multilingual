@@ -8,7 +8,7 @@ import type {
 import axios from 'axios'
 import qs from 'qs'
 import { ResultEnum } from '@/request/types.ts'
-import router from '@/router'
+import router from '@/router/index'
 import { getToken, removeToken } from '@/utils/auth'
 // import router from '@/router'
 
@@ -17,6 +17,11 @@ export interface ResponseData<T = unknown> {
   code: number
   data: T
   message: string
+}
+
+export interface DownloadData {
+  blob: Blob
+  filename?: string
 }
 
 // 创建 axios 实例
@@ -97,7 +102,7 @@ const responseHandler = (response: AxiosResponse) => {
   const code = data.code || 200
 
   // 二进制数据则直接返回
-  if (response.request.responseType === 'blob' || response.request.responseType === 'arraybuffer') {
+  if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
     return response
   }
 
@@ -157,6 +162,27 @@ export const api = {
       responseType: 'blob',
       ...option,
     })
+  },
+
+  downloadPost: async (option: AxiosRequestConfig): Promise<DownloadData> => {
+    const response = await request({
+      method: 'POST',
+      responseType: 'blob',
+      ...option,
+    }) as unknown as AxiosResponse<Blob>
+
+    const contentType = String(response.headers['content-type'] || '')
+    if (contentType.includes('application/json')) {
+      const payload = JSON.parse(await response.data.text())
+      throw new Error(payload.message || '文件生成失败')
+    }
+
+    const disposition = String(response.headers['content-disposition'] || '')
+    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i)
+    return {
+      blob: response.data,
+      filename: filenameMatch?.[1],
+    }
   },
 
   upload: <T>(option: UploadRequestConfig): Promise<ResponseData<T>> => {

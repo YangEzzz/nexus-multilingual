@@ -11,12 +11,12 @@ import {
   FileEdit,
   FolderKanban,
   Languages,
-  Loader2,
   RefreshCw,
   Wrench,
 } from 'lucide-vue-next'
 import { api } from '@/request'
 import { toast } from 'vue-sonner'
+import DashboardSkeleton from './DashboardSkeleton.vue'
 
 defineOptions({ name: 'dashboard' })
 
@@ -270,10 +270,7 @@ onMounted(loadProjects)
       </div>
     </div>
 
-    <div v-if="loadingProjects" class="flex items-center gap-2 rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
-      <Loader2 class="size-4 animate-spin" />
-      正在加载项目列表...
-    </div>
+    <DashboardSkeleton v-if="loadingProjects" show-project-list />
 
     <div v-else-if="projects.length === 0" class="rounded-3xl border border-dashed bg-card/70 p-10 text-center">
       <FolderKanban class="mx-auto mb-4 size-10 text-muted-foreground/60" />
@@ -297,10 +294,7 @@ onMounted(loadProjects)
         </button>
       </div>
 
-      <div v-if="loadingDashboard && !dashboard" class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <div class="h-52 animate-pulse rounded-3xl bg-muted/60" />
-        <div class="h-52 animate-pulse rounded-3xl bg-muted/60" />
-      </div>
+      <DashboardSkeleton v-if="loadingDashboard && !dashboard" />
 
       <template v-else-if="dashboard && currentProject && stats && focus">
         <div class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">

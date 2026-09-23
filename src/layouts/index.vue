@@ -25,7 +25,7 @@ const { contentLayout } = storeToRefs(themeStore)
         )"
       >
         <router-view v-slot="{ Component, route }">
-          <keep-alive :include="['dashboard', 'workbench', 'projects', 'project-logs']">
+          <keep-alive :include="['dashboard', 'workbench', 'projects', 'project-logs', 'AiSettings']">
             <component :is="Component" :key="route.fullPath" />
           </keep-alive>
         </router-view>

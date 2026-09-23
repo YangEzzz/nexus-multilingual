@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ArrowRight, CalendarDays, Folder, Languages, Loader2, Pencil, Plus, RefreshCcw, Search, Trash2, X } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-
-defineOptions({ name: 'projects' })
-
-import { Plus, Folder, Trash2, Pencil, ArrowRight, Loader2 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
 import { api } from '@/request'
+
+defineOptions({ name: 'Projects' })
 
 interface I18nProject {
   id: number
@@ -16,35 +15,66 @@ interface I18nProject {
   description: string
   created_at: string
   updated_at: string
-  languages?: Array<{ code: string; name: string }>
+  languages?: Array<{ code: string, name: string }>
 }
 
 const router = useRouter()
 const projects = ref<I18nProject[]>([])
 const loading = ref(true)
-const availableLanguages = ref<Array<{ code: string; name: string }>>([])
+const loadError = ref('')
+const availableLanguages = ref<Array<{ code: string, name: string }>>([])
 const languagesLoading = ref(false)
 const languagesError = ref('')
+const searchQuery = ref('')
 
 // Dialog state
 const showDialog = ref(false)
 const isEditing = ref(false)
 const submitting = ref(false)
+const formError = ref('')
 const formData = ref({ id: 0, name: '', code: '', description: '' })
 const selectedLangCodes = ref<string[]>([])
 
 // Delete dialog
 const showDeleteDialog = ref(false)
 const deletingProject = ref<I18nProject | null>(null)
+const deleting = ref(false)
+
+const filteredProjects = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query)
+    return projects.value
+
+  return projects.value.filter(project => [project.name, project.code, project.description].some(value => value?.toLowerCase().includes(query)))
+})
+
+const configuredLanguageCount = computed(() => {
+  return new Set(projects.value.flatMap(project => project.languages?.map(language => language.code) || [])).size
+})
+
+function formatUpdatedAt(value: string) {
+  if (!value)
+    return '暂无更新'
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(value))
+}
 
 async function loadProjects() {
   loading.value = true
+  loadError.value = ''
   try {
     const res = await api.get<I18nProject[]>({ url: '/projects' })
     projects.value = res.data ?? []
-  } catch (e: any) {
+  }
+  catch (e: any) {
+    loadError.value = e.message || '暂时无法获取项目列表'
     toast.error('加载项目失败', { description: e.message })
-  } finally {
+  }
+  finally {
     loading.value = false
   }
 }
@@ -65,12 +95,15 @@ async function loadAvailableLanguages() {
 
 function toggleLang(code: string) {
   const idx = selectedLangCodes.value.indexOf(code)
-  if (idx === -1) selectedLangCodes.value.push(code)
-  else selectedLangCodes.value.splice(idx, 1)
+  if (idx === -1)
+    selectedLangCodes.value.push(code)
+  else
+    selectedLangCodes.value.splice(idx, 1)
 }
 
 function openCreate() {
   isEditing.value = false
+  formError.value = ''
   formData.value = { id: 0, name: '', code: '', description: '' }
   selectedLangCodes.value = availableLanguages.value.map(lang => lang.code)
   showDialog.value = true
@@ -78,6 +111,7 @@ function openCreate() {
 
 function openEdit(project: I18nProject) {
   isEditing.value = true
+  formError.value = ''
   formData.value = { id: project.id, name: project.name, code: project.code, description: project.description }
   selectedLangCodes.value = (project.languages || []).map(l => l.code)
   showDialog.value = true
@@ -93,44 +127,61 @@ function confirmDelete(project: I18nProject) {
 }
 
 async function submitForm() {
-  if (!formData.value.name || !formData.value.code) {
-    toast.warning('请填写项目名称和标识符')
+  const name = formData.value.name.trim()
+  const code = formData.value.code.trim()
+  if (!name || !code) {
+    formError.value = '请填写项目名称和标识符。'
     return
   }
   if (selectedLangCodes.value.length === 0) {
-    toast.warning('请至少选择一种语言')
+    formError.value = '请至少选择一种项目语言。'
     return
   }
   submitting.value = true
+  formError.value = ''
   try {
     if (isEditing.value) {
-      await api.post({ url: `/projects/${formData.value.id}/update`, data: formData.value })
+      await api.post({
+        url: `/projects/${formData.value.id}/update`,
+        data: { ...formData.value, name, code },
+      })
       await saveLanguages(formData.value.id)
       toast.success('更新成功')
-    } else {
-      const res = await api.post<any>({ url: '/projects', data: formData.value })
+    }
+    else {
+      const res = await api.post<any>({ url: '/projects', data: { ...formData.value, name, code } })
       const newId = res.data?.id
-      if (newId) await saveLanguages(newId)
+      if (newId)
+        await saveLanguages(newId)
       toast.success('项目创建成功')
     }
     showDialog.value = false
-    loadProjects()
-  } catch (e: any) {
+    await loadProjects()
+  }
+  catch (e: any) {
+    formError.value = e.message || '保存失败，请检查后重试。'
     toast.error('操作失败', { description: e.message })
-  } finally {
+  }
+  finally {
     submitting.value = false
   }
 }
 
 async function doDelete() {
-  if (!deletingProject.value) return
+  if (!deletingProject.value || deleting.value)
+    return
+  deleting.value = true
   try {
     await api.post({ url: `/projects/${deletingProject.value.id}/delete` })
     toast.success('项目已删除')
     showDeleteDialog.value = false
-    loadProjects()
-  } catch (e: any) {
+    await loadProjects()
+  }
+  catch (e: any) {
     toast.error('删除失败', { description: e.message })
+  }
+  finally {
+    deleting.value = false
   }
 }
 
@@ -145,193 +196,311 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
 </script>
 
 <template>
-  <div class="h-full p-6 space-y-6">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold tracking-tight">翻译项目</h1>
-        <p class="text-sm text-muted-foreground mt-1">管理你所有的多语言翻译项目</p>
+  <div class="min-h-0 space-y-6 p-4 lg:p-6">
+    <header class="flex flex-col gap-5 rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] via-background to-background p-5 shadow-sm sm:p-6 lg:flex-row lg:items-end lg:justify-between">
+      <div class="min-w-0">
+        <div class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-primary">
+          <span class="size-1.5 rounded-full bg-primary" />
+          项目空间
+        </div>
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+          翻译项目
+        </h1>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+          集中管理项目语言、词条内容和发布工作流，让每个翻译空间都有清晰的边界。
+        </p>
       </div>
-      <UiButton @click="openCreate">
-        <Plus class="size-4 mr-2" />
-        新建项目
+
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="rounded-2xl border border-border/70 bg-background/70 px-4 py-2.5 text-right">
+          <div class="font-mono text-lg font-semibold text-foreground">
+            {{ projects.length }}
+          </div>
+          <div class="text-[11px] text-muted-foreground">
+            个项目
+          </div>
+        </div>
+        <div class="rounded-2xl border border-border/70 bg-background/70 px-4 py-2.5 text-right">
+          <div class="font-mono text-lg font-semibold text-foreground">
+            {{ configuredLanguageCount }}
+          </div>
+          <div class="text-[11px] text-muted-foreground">
+            种已配置语言
+          </div>
+        </div>
+        <UiButton class="rounded-xl" @click="openCreate">
+          <Plus class="mr-2 size-4" />
+          新建项目
+        </UiButton>
+      </div>
+    </header>
+
+    <section v-if="!loading && projects.length > 0" class="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4" aria-label="项目筛选">
+      <div class="relative min-w-0 flex-1 sm:max-w-md">
+        <label for="project-search" class="sr-only">搜索项目</label>
+        <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <UiInput
+          id="project-search"
+          v-model="searchQuery"
+          placeholder="搜索项目名称、标识符或描述"
+          class="h-10 rounded-xl bg-background pl-9 pr-9"
+        />
+        <button v-if="searchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除项目搜索" @click="searchQuery = ''">
+          <X class="size-3.5" />
+        </button>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+        <span class="size-1.5 rounded-full bg-primary/60" />
+        显示 {{ filteredProjects.length }} / {{ projects.length }} 个项目
+      </div>
+    </section>
+
+    <div v-if="loading" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" role="status" aria-live="polite" aria-label="正在加载项目">
+      <div v-for="index in 8" :key="index" class="overflow-hidden rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
+        <div class="flex items-start gap-3">
+          <UiSkeleton class="size-10 rounded-xl" />
+          <div class="min-w-0 flex-1 space-y-2">
+            <UiSkeleton class="h-4 w-3/5" />
+            <UiSkeleton class="h-3 w-2/5" />
+          </div>
+        </div>
+        <div class="mt-5 space-y-2">
+          <UiSkeleton class="h-3 w-full" />
+          <UiSkeleton class="h-3 w-4/5" />
+        </div>
+        <div class="mt-6 flex items-center justify-between">
+          <UiSkeleton class="h-3 w-20" />
+          <UiSkeleton class="h-8 w-28 rounded-lg" />
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="loadError" class="flex min-h-72 flex-col items-center justify-center gap-4 rounded-3xl border border-destructive/20 bg-destructive/[0.03] p-8 text-center" role="alert">
+      <div class="flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+        <RefreshCcw class="size-5" />
+      </div>
+      <div>
+        <h2 class="text-base font-semibold text-foreground">
+          项目列表加载失败
+        </h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          {{ loadError }}
+        </p>
+      </div>
+      <UiButton variant="outline" size="sm" @click="loadProjects">
+        <RefreshCcw class="mr-2 size-4" />
+        重新加载
       </UiButton>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="flex items-center justify-center py-24">
-      <Loader2 class="size-8 animate-spin text-muted-foreground" />
+    <div v-else-if="projects.length === 0" class="flex min-h-80 flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border bg-card/70 p-8 text-center">
+      <div class="flex size-14 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 text-primary">
+        <Folder class="size-6" />
+      </div>
+      <div>
+        <h2 class="text-lg font-semibold text-foreground">
+          还没有翻译项目
+        </h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          创建第一个项目，开始组织语言和词条内容。
+        </p>
+      </div>
+      <UiButton variant="outline" @click="openCreate">
+        <Plus class="mr-2 size-4" />
+        创建第一个项目
+      </UiButton>
     </div>
 
-    <!-- Empty state -->
-    <div
-      v-else-if="projects.length === 0"
-      class="flex flex-col items-center justify-center border border-dashed rounded-xl py-24 text-muted-foreground gap-3"
-    >
-      <Folder class="size-12 opacity-30" />
-      <p class="text-sm">还没有翻译项目，点击右上角新建一个吧</p>
+    <div v-else-if="filteredProjects.length === 0" class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border bg-card/70 p-8 text-center">
+      <Search class="size-8 text-muted-foreground/60" />
+      <div>
+        <h2 class="text-base font-semibold text-foreground">
+          没有匹配的项目
+        </h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          换一个名称、标识符或描述关键词试试。
+        </p>
+      </div>
+      <UiButton variant="ghost" size="sm" @click="searchQuery = ''">
+        清除搜索
+      </UiButton>
     </div>
 
-    <!-- Project grid -->
-    <div v-else class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-      <div
-        v-for="project in projects"
+    <div v-else class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <article
+        v-for="project in filteredProjects"
         :key="project.id"
-        class="group relative flex flex-col rounded-xl border bg-card shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden cursor-pointer"
-        @click="enterWorkbench(project)"
+        class="group flex min-h-64 flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
       >
-        <!-- Color stripe -->
-        <div class="h-1.5 bg-gradient-to-r from-primary to-primary/50" />
+        <div class="h-1 bg-gradient-to-r from-primary via-primary/70 to-primary/20" />
 
-        <div class="p-5 flex flex-col gap-3 flex-1">
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <div class="size-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                <Folder class="size-4 text-primary" />
-              </div>
-              <div>
-                <h3 class="font-semibold leading-tight text-sm">{{ project.name }}</h3>
-                <code class="text-[11px] text-muted-foreground">{{ project.code }}</code>
-              </div>
+        <div class="flex flex-1 flex-col gap-4 p-5">
+          <div class="flex items-start gap-3">
+            <div class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/10 text-primary">
+              <Folder class="size-4" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <h2 class="truncate text-sm font-semibold text-foreground" :title="project.name">
+                {{ project.name }}
+              </h2>
+              <code class="mt-1 block truncate font-mono text-[11px] text-muted-foreground" :title="project.code">{{ project.code }}</code>
             </div>
           </div>
 
-          <p class="text-xs text-muted-foreground line-clamp-2 min-h-[2.5rem]">
-            {{ project.description || '暂无描述' }}
+          <p class="line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+            {{ project.description || '暂无描述，为项目补充背景与命名规范。' }}
           </p>
-        </div>
 
-        <!-- Footer -->
-        <div class="px-5 pb-4 flex items-center justify-between">
-          <span class="text-[11px] text-muted-foreground">
-            {{ new Date(project.updated_at).toLocaleDateString('zh-CN') }}
-          </span>
-          <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <UiButton
-              size="icon"
-              variant="ghost"
-              class="size-7"
-              @click.stop="openEdit(project)"
-            >
-              <Pencil class="size-3.5" />
-            </UiButton>
-            <UiButton
-              size="icon"
-              variant="ghost"
-              class="size-7 text-destructive hover:text-destructive"
-              @click.stop="confirmDelete(project)"
-            >
-              <Trash2 class="size-3.5" />
-            </UiButton>
-            <UiButton
-              size="icon"
-              variant="ghost"
-              class="size-7"
-              @click.stop="enterWorkbench(project)"
-            >
-              <ArrowRight class="size-3.5" />
-            </UiButton>
+          <div class="mt-auto flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span class="inline-flex items-center gap-1 rounded-full bg-muted/70 px-2 py-1">
+              <Languages class="size-3" />
+              {{ project.languages?.length || 0 }} 种语言
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <CalendarDays class="size-3" />
+              {{ formatUpdatedAt(project.updated_at) }}
+            </span>
           </div>
         </div>
-      </div>
+
+        <div class="flex items-center gap-2 border-t border-border/70 bg-muted/20 px-4 py-3">
+          <UiButton class="min-w-0 flex-1 rounded-lg" size="sm" @click="enterWorkbench(project)">
+            进入工作台
+            <ArrowRight class="size-3.5" />
+          </UiButton>
+          <UiButton size="icon" variant="ghost" class="size-8" :aria-label="`编辑${project.name}`" :title="`编辑${project.name}`" @click="openEdit(project)">
+            <Pencil class="size-3.5" />
+          </UiButton>
+          <UiButton size="icon" variant="ghost" class="size-8 text-destructive hover:text-destructive" :aria-label="`删除${project.name}`" :title="`删除${project.name}`" @click="confirmDelete(project)">
+            <Trash2 class="size-3.5" />
+          </UiButton>
+        </div>
+      </article>
     </div>
 
-    <!-- Create / Edit Dialog -->
     <UiDialog v-model:open="showDialog">
       <UiDialogContent class="sm:max-w-lg">
-        <UiDialogHeader>
-          <UiDialogTitle>{{ isEditing ? '编辑项目' : '新建翻译项目' }}</UiDialogTitle>
-          <UiDialogDescription>
-            {{ isEditing ? '修改项目信息后保存' : '填写新项目的基本信息' }}
-          </UiDialogDescription>
-        </UiDialogHeader>
-        <div class="grid gap-4 py-2 max-h-[65vh] overflow-y-auto pr-1">
-          <div class="grid gap-2">
-            <UiLabel>项目名称 *</UiLabel>
-            <UiInput v-model="formData.name" placeholder="如：Nexus 后端" />
-          </div>
-          <div class="grid gap-2">
-            <UiLabel>项目标识符 (Code) *</UiLabel>
-            <UiInput
-              v-model="formData.code"
-              :disabled="isEditing"
-              placeholder="如：nexus-backend（创建后不可修改）"
-              class="font-mono"
-            />
-          </div>
-          <div class="grid gap-2">
-            <UiLabel>描述</UiLabel>
-            <UiTextarea v-model="formData.description" placeholder="简单描述一下这个项目是做什么的..." rows="2" />
-          </div>
-          <div class="grid gap-2">
-            <div class="flex items-center justify-between">
-              <UiLabel>目标语言 * <span class="text-muted-foreground font-normal text-xs ml-1">（已选 {{ selectedLangCodes.length }} 种）</span></UiLabel>
-              <div class="flex items-center gap-2">
-                <button type="button" class="text-[10px] text-primary hover:underline" @click="selectedLangCodes = availableLanguages.map(lang => lang.code)">全选</button>
-                <span class="text-[10px] text-muted-foreground opacity-30">|</span>
-                <button type="button" class="text-[10px] text-muted-foreground hover:text-primary hover:underline" @click="selectedLangCodes = []">清空</button>
+        <form novalidate @submit.prevent="submitForm">
+          <UiDialogHeader>
+            <UiDialogTitle>{{ isEditing ? '编辑项目' : '新建翻译项目' }}</UiDialogTitle>
+            <UiDialogDescription>
+              {{ isEditing ? '更新项目资料和语言范围。' : '先确定项目边界，再开始录入和翻译词条。' }}
+            </UiDialogDescription>
+          </UiDialogHeader>
+          <div class="max-h-[65vh] space-y-5 overflow-y-auto py-5 pr-1">
+            <div class="grid gap-2">
+              <UiLabel for="project-name">
+                项目名称 <span class="text-destructive">*</span>
+              </UiLabel>
+              <UiInput id="project-name" v-model="formData.name" maxlength="255" placeholder="例如：Nexus 后端" :aria-invalid="Boolean(formError)" />
+            </div>
+            <div class="grid gap-2">
+              <UiLabel for="project-code">
+                项目标识符 <span class="text-destructive">*</span>
+              </UiLabel>
+              <UiInput
+                id="project-code"
+                v-model="formData.code"
+                :disabled="isEditing"
+                maxlength="100"
+                placeholder="例如：nexus-backend"
+                class="font-mono"
+                :aria-invalid="Boolean(formError)"
+              />
+              <p class="text-xs text-muted-foreground">
+                {{ isEditing ? '项目标识符创建后不可修改。' : '使用稳定、易识别的英文标识符。' }}
+              </p>
+            </div>
+            <div class="grid gap-2">
+              <UiLabel for="project-description">
+                项目描述
+              </UiLabel>
+              <UiTextarea id="project-description" v-model="formData.description" maxlength="1000" placeholder="描述项目用途、上下文或命名规范..." rows="3" class="resize-none" />
+            </div>
+            <div class="grid gap-2">
+              <div class="flex items-center justify-between gap-3">
+                <UiLabel>项目语言 <span class="text-destructive">*</span> <span class="ml-1 text-xs font-normal text-muted-foreground">已选 {{ selectedLangCodes.length }} 种</span></UiLabel>
+                <div class="flex shrink-0 items-center gap-2 text-xs">
+                  <button type="button" class="font-medium text-primary underline-offset-4 hover:underline" @click="selectedLangCodes = availableLanguages.map(lang => lang.code)">
+                    全选
+                  </button>
+                  <span class="text-muted-foreground/40">|</span>
+                  <button type="button" class="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline" @click="selectedLangCodes = []">
+                    清空
+                  </button>
+                </div>
+              </div>
+              <div v-if="languagesLoading" class="flex min-h-28 items-center justify-center rounded-xl border border-border/70 bg-muted/20" role="status" aria-live="polite">
+                <Loader2 class="mr-2 size-5 animate-spin text-primary" />
+                <span class="text-sm text-muted-foreground">正在加载可选语言</span>
+              </div>
+              <div v-else-if="languagesError" class="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive" role="alert">
+                <p>{{ languagesError }}</p>
+                <UiButton type="button" variant="outline" size="sm" class="mt-3" @click="loadAvailableLanguages">
+                  重新加载语言
+                </UiButton>
+              </div>
+              <div v-else-if="availableLanguages.length === 0" class="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                还没有可选语言，请先到“可选语言”页面添加。
+              </div>
+              <div v-else class="grid grid-cols-2 gap-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-3" role="group" aria-label="选择项目语言">
+                <button
+                  v-for="lang in availableLanguages"
+                  :key="lang.code"
+                  type="button"
+                  class="flex min-w-0 items-center gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm transition-colors hover:bg-background hover:shadow-sm focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                  :class="selectedLangCodes.includes(lang.code) ? 'border-primary/20 bg-primary/10 font-medium text-primary' : 'text-foreground'"
+                  :aria-pressed="selectedLangCodes.includes(lang.code)"
+                  @click="toggleLang(lang.code)"
+                >
+                  <span class="flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors" :class="selectedLangCodes.includes(lang.code) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40 bg-background'">
+                    <svg v-if="selectedLangCodes.includes(lang.code)" class="size-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </span>
+                  <span class="min-w-0 truncate">{{ lang.name }}</span>
+                  <code class="ml-auto shrink-0 text-[10px] text-muted-foreground">{{ lang.code }}</code>
+                </button>
               </div>
             </div>
-            <div v-if="languagesLoading" class="flex min-h-24 items-center justify-center rounded-lg border bg-muted/20" role="status">
-              <Loader2 class="size-5 animate-spin text-muted-foreground" />
-              <span class="ml-2 text-sm text-muted-foreground">正在加载可选语言</span>
-            </div>
-            <div v-else-if="languagesError" class="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">
-              <p>{{ languagesError }}</p>
-              <UiButton type="button" variant="outline" size="sm" class="mt-2" @click="loadAvailableLanguages">重试</UiButton>
-            </div>
-            <div v-else-if="availableLanguages.length === 0" class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-              还没有可选语言，请先到“可选语言”页面添加。
-            </div>
-            <div v-else class="grid grid-cols-3 gap-1.5 p-3 border rounded-lg bg-muted/30">
-              <label
-                v-for="lang in availableLanguages"
-                :key="lang.code"
-                class="flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors"
-                :class="{ 'bg-primary/10 text-primary font-medium': selectedLangCodes.includes(lang.code) }"
-                @click="toggleLang(lang.code)"
-              >
-                <div
-                  class="size-3.5 rounded border shrink-0 flex items-center justify-center transition-colors"
-                  :class="selectedLangCodes.includes(lang.code) ? 'bg-primary border-primary' : 'border-muted-foreground/40'"
-                >
-                  <svg v-if="selectedLangCodes.includes(lang.code)" class="size-2.5 text-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <span class="truncate">{{ lang.name }}</span>
-                <code class="text-[10px] text-muted-foreground ml-auto shrink-0">{{ lang.code }}</code>
-              </label>
-            </div>
+            <p v-if="formError" role="alert" class="rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+              {{ formError }}
+            </p>
           </div>
-        </div>
-        <UiDialogFooter>
-          <UiButton variant="outline" @click="showDialog = false">取消</UiButton>
-          <UiButton :disabled="submitting || languagesLoading || availableLanguages.length === 0" @click="submitForm">
-            <Loader2 v-if="submitting" class="size-4 mr-2 animate-spin" />
-            {{ isEditing ? '保存' : '创建' }}
-          </UiButton>
-        </UiDialogFooter>
+          <UiDialogFooter>
+            <UiButton type="button" variant="outline" :disabled="submitting" @click="showDialog = false">
+              取消
+            </UiButton>
+            <UiButton type="submit" :disabled="submitting || languagesLoading || availableLanguages.length === 0">
+              <Loader2 v-if="submitting" class="mr-2 size-4 animate-spin" />
+              {{ submitting ? (isEditing ? '正在保存' : '正在创建') : (isEditing ? '保存项目' : '创建项目') }}
+            </UiButton>
+          </UiDialogFooter>
+        </form>
       </UiDialogContent>
     </UiDialog>
 
-    <!-- Delete Confirm -->
     <UiAlertDialog v-model:open="showDeleteDialog">
       <UiAlertDialogContent>
         <UiAlertDialogHeader>
-          <UiAlertDialogTitle>确认删除？</UiAlertDialogTitle>
+          <UiAlertDialogTitle>删除这个项目？</UiAlertDialogTitle>
           <UiAlertDialogDescription>
-            你确定要删除项目 <strong>「{{ deletingProject?.name }}」</strong> 吗？此操作不可撤销，项目下所有词条将一并删除。
+            项目 <strong>「{{ deletingProject?.name }}」</strong> 及其语言、词条、翻译和历史记录将一并永久删除，此操作不可撤销。
           </UiAlertDialogDescription>
         </UiAlertDialogHeader>
         <UiAlertDialogFooter>
-          <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction
+          <UiAlertDialogCancel :disabled="deleting">
+            取消
+          </UiAlertDialogCancel>
+          <UiButton
+            type="button"
+            :disabled="deleting"
             class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             @click="doDelete"
           >
-            确认删除
-          </UiAlertDialogAction>
+            <Loader2 v-if="deleting" class="mr-2 size-4 animate-spin" />
+            {{ deleting ? '正在删除' : '永久删除项目' }}
+          </UiButton>
         </UiAlertDialogFooter>
       </UiAlertDialogContent>
     </UiAlertDialog>

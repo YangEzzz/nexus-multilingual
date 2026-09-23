@@ -1,34 +1,34 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { Activity, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Copy, Download, Edit3, FolderKanban, ListPlus, Loader2, Plus, RotateCcw, Save, Search, Trash2, Upload, Wand2, Wrench, X } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+
 import { useRoute, useRouter } from 'vue-router'
-
-defineOptions({ name: 'workbench' })
-
-import { Download, Plus, Trash2, Search, CalendarDays, Wand2, Loader2, Upload, Copy, X, ListPlus, Edit3, Save, RotateCcw, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle2, Activity, FolderKanban, Wrench } from 'lucide-vue-next'
-import { api } from '@/request'
-import { useAuthStore } from '@/store/auth'
-import { ai } from '@/lib/gemini'
-import { fetchAvailableLanguages } from '@/lib/available-languages'
-import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
-import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from '@/constants/pagination'
 import { toast } from 'vue-sonner'
 import * as XLSX from 'xlsx'
+import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from '@/constants/pagination'
+import { requestAITranslation } from '@/lib/ai'
+import { fetchAvailableLanguages } from '@/lib/available-languages'
+import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
+import { api } from '@/request'
+import { useAuthStore } from '@/store/auth'
+
+defineOptions({ name: 'Workbench' })
 
 interface Translation {
   [key: string]: string
 }
 
 interface TermItem {
-  id: string;
-  module: string;
-  key: string;
-  description: string;
-  translations: Translation;
-  status: 'draft' | 'pending' | 'review' | 'published';
-  updatedAt?: string;
-  created_at?: string;
-  updated_at?: string;
-  history?: Array<{ time: string; action: string; user: string }>;
+  id: string
+  module: string
+  key: string
+  description: string
+  translations: Translation
+  status: 'draft' | 'pending' | 'review' | 'published'
+  updatedAt?: string
+  created_at?: string
+  updated_at?: string
+  history?: Array<{ time: string, action: string, user: string }>
 }
 
 interface BatchCreateRow {
@@ -39,10 +39,51 @@ interface BatchCreateRow {
   sourceText: string
 }
 
+interface TermStatusCounts {
+  draft: number
+  pending: number
+  review: number
+  published: number
+}
+
+interface TermListResponse {
+  items: any[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  status_counts: TermStatusCounts
+  modules: string[]
+  project_summary: {
+    total: number
+    status_counts: TermStatusCounts
+    ready_review_count: number
+  }
+}
+
+type BulkOperation = 'approve_review' | 'publish' | 'delete'
+
+interface TermBulkScope {
+  mode: 'explicit' | 'filtered'
+  ids?: number[]
+  filter?: Record<string, string | boolean | undefined>
+  excluded_ids?: number[]
+}
+
+interface TermBulkResult {
+  operation: BulkOperation
+  matched: number
+  executable: number
+  succeeded: number
+  skipped: number
+  status_counts: TermStatusCounts
+  skip_reasons: Record<string, number>
+}
+
 interface Language {
-  code: string;
-  name: string;
-  is_source?: boolean;
+  code: string
+  name: string
+  is_source?: boolean
 }
 
 // Only languages configured for this project; drives table columns
@@ -65,7 +106,8 @@ function getPlaceholderSource(term: TermItem) {
   }
 
   const firstFilledTranslation = Object.values(term.translations).find(value => value?.trim())
-  if (firstFilledTranslation) return firstFilledTranslation
+  if (firstFilledTranslation)
+    return firstFilledTranslation
 
   return term.description || ''
 }
@@ -99,8 +141,10 @@ function formatPlaceholderIssues(term: TermItem) {
   return getTermPlaceholderIssues(term)
     .map(({ lang, diff }) => {
       const parts = []
-      if (diff.missing.length) parts.push(`缺少 ${diff.missing.join(', ')}`)
-      if (diff.extra.length) parts.push(`多出 ${diff.extra.join(', ')}`)
+      if (diff.missing.length)
+        parts.push(`缺少 ${diff.missing.join(', ')}`)
+      if (diff.extra.length)
+        parts.push(`多出 ${diff.extra.join(', ')}`)
       return `${lang.name}: ${parts.join('，')}`
     })
     .join('；')
@@ -108,7 +152,8 @@ function formatPlaceholderIssues(term: TermItem) {
 
 function placeholderInstructionForTerm(term: TermItem) {
   const placeholders = extractPlaceholders(getPlaceholderSource(term))
-  if (!placeholders.length) return ''
+  if (!placeholders.length)
+    return ''
 
   return `\n\n占位符保护要求：本词条包含代码运行时变量 ${placeholders.join(', ')}。所有目标语言译文必须原样保留这些占位符；不要翻译、删除、重命名、增减、改变大小写或改变花括号。可以根据语序移动位置，但占位符文本必须完全一致。`
 }
@@ -143,18 +188,63 @@ async function fetchProjects() {
 
       router.replace({ query: { ...route.query, project: targetId } })
     }
-  } catch (e) {
+  }
+  catch (e) {
     console.error('Failed to load projects', e)
-  } finally {
+  }
+  finally {
     loadingProjects.value = false
   }
 }
 
 const terms = ref<TermItem[]>([])
-const loadingTerms = ref(false)
+// Keep the table covered while the workbench resolves the project and its data.
+// This prevents an empty table flash before the first terms request starts.
+const loadingTerms = ref(true)
+const totalTerms = ref(0)
+const totalPages = ref(1)
+const modules = ref<string[]>([])
+const filteredStatusCounts = ref<TermStatusCounts>({ draft: 0, pending: 0, review: 0, published: 0 })
+const projectSummary = ref({
+  total: 0,
+  status_counts: { draft: 0, pending: 0, review: 0, published: 0 } as TermStatusCounts,
+  ready_review_count: 0,
+})
+let latestTermsRequest = 0
+
+function mapApiTerm(term: any): TermItem {
+  return {
+    ...term,
+    id: String(term.id),
+    translations: term.translations?.reduce((acc: Translation, translation: any) => {
+      acc[translation.language_code] = translation.content
+      return acc
+    }, {} as Translation) || {},
+  }
+}
+
+function getTermFilterParams() {
+  return {
+    search: searchQuery.value.trim() || undefined,
+    chinese_search: chineseSearchQuery.value.trim() || undefined,
+    english_search: englishSearchQuery.value.trim() || undefined,
+    module: selectedModule.value !== 'all' ? selectedModule.value : undefined,
+    status: selectedStatus.value !== 'all' ? selectedStatus.value : undefined,
+    exclude_draft: isTranslator.value || undefined,
+  }
+}
+
+function getTermListParams(page = currentPage.value, size = pageSize.value) {
+  return {
+    page,
+    page_size: size,
+    ...getTermFilterParams(),
+  }
+}
 
 async function loadProjectLanguages() {
-  if (!projectId.value) return
+  if (!projectId.value)
+    return
 
   const cachedStr = sessionStorage.getItem(`project_langs_${projectId.value}`)
   if (cachedStr) {
@@ -164,17 +254,20 @@ async function loadProjectLanguages() {
         targetLanguages.value = parsed.map((l: any) => ({ code: l.code, name: l.name, is_source: l.is_source }))
         return
       }
-    } catch { /* ignore */ }
+    }
+    catch { /* ignore */ }
   }
 
   try {
     const res = await api.get<any>({ url: `/projects/${projectId.value}/languages` })
     if (res.code === 200 && res.data?.length) {
       targetLanguages.value = res.data.map((l: any) => ({ code: l.code, name: l.name, is_source: l.is_source }))
-    } else {
+    }
+    else {
       targetLanguages.value = availableLanguages.value
     }
-  } catch {
+  }
+  catch {
     targetLanguages.value = availableLanguages.value
   }
 }
@@ -190,45 +283,87 @@ async function loadAvailableLanguages() {
 }
 
 async function loadTerms() {
-  if (!projectId.value) return
+  if (!projectId.value)
+    return
+  const requestId = ++latestTermsRequest
+  loadingTerms.value = true
   try {
-    const res = await api.get<any>({ url: `/projects/${projectId.value}/terms` })
-    if (res.code === 200) {
-      terms.value = res.data?.map((t: any) => ({
-        ...t,
-        translations: t.translations?.reduce((acc: any, tr: any) => {
-          acc[tr.language_code] = tr.content
-          return acc
-        }, {} as Translation) || {}
-      })) || []
+    const res = await api.get<TermListResponse>({
+      url: `/projects/${projectId.value}/terms`,
+      params: getTermListParams(),
+    })
+    if (requestId !== latestTermsRequest)
+      return
+
+    terms.value = (res.data?.items || []).map(mapApiTerm)
+    totalTerms.value = Number(res.data?.total || 0)
+    totalPages.value = Math.max(1, Number(res.data?.total_pages || 1))
+    modules.value = res.data?.modules || []
+    filteredStatusCounts.value = res.data?.status_counts || { draft: 0, pending: 0, review: 0, published: 0 }
+    projectSummary.value = res.data?.project_summary || {
+      total: 0,
+      status_counts: { draft: 0, pending: 0, review: 0, published: 0 },
+      ready_review_count: 0,
     }
-  } catch (error: any) {
-    toast.error('获取词条失败', { description: error.message })
+    if (currentPage.value !== Number(res.data?.page || 1)) {
+      currentPage.value = Number(res.data?.page || 1)
+    }
+    syncSelectedTermCacheFromPage()
   }
+  catch (error: any) {
+    if (requestId === latestTermsRequest) {
+      toast.error('获取词条失败', { description: error.message })
+    }
+  }
+  finally {
+    if (requestId === latestTermsRequest)
+      loadingTerms.value = false
+  }
+}
+
+async function fetchAllMatchingTerms() {
+  const collected: TermItem[] = []
+  const baseParams = getTermListParams(1, 200)
+  let page = 1
+  let pages = 1
+  do {
+    const res = await api.get<TermListResponse>({
+      url: `/projects/${projectId.value}/terms`,
+      params: { ...baseParams, page },
+    })
+    collected.push(...(res.data?.items || []).map(mapApiTerm))
+    pages = Math.max(1, Number(res.data?.total_pages || 1))
+    page++
+  } while (page <= pages)
+  return collected
 }
 
 const isSavingPrompt = ref(false)
 async function saveGlobalPrompt() {
-  if (!projectId.value || !isAdmin.value) return
+  if (!projectId.value || !isAdmin.value)
+    return
   isSavingPrompt.value = true
   try {
     await api.post({
       url: `/projects/${projectId.value}/update`,
       data: {
-        ai_prompt: globalPrompt.value
-      }
+        ai_prompt: globalPrompt.value,
+      },
     })
     toast.success('配置已保存', { description: '全局 AI 提示词已更新。' })
     showSettingsModal.value = false
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('保存失败', { description: e.message })
-  } finally {
+  }
+  finally {
     isSavingPrompt.value = false
   }
 }
 
 async function loadProjectDetails() {
-  if (!projectId.value) return
+  if (!projectId.value)
+    return
   try {
     const res = await api.get<any>({ url: `/projects/${projectId.value}` })
     if (res.code === 200 && res.data) {
@@ -236,27 +371,33 @@ async function loadProjectDetails() {
         globalPrompt.value = res.data.ai_prompt
       }
     }
-  } catch (e) {
+  }
+  catch (e) {
     console.error('Failed to load project details', e)
   }
 }
 
 async function refreshData() {
-  if (!projectId.value) return
+  if (!projectId.value) {
+    loadingTerms.value = false
+    return
+  }
+  // Start the table feedback before the language/project detail requests.
   loadingTerms.value = true
   await loadAvailableLanguages()
   await Promise.all([
     loadProjectLanguages(),
     loadTerms(),
-    loadProjectDetails()
+    loadProjectDetails(),
   ])
-  loadingTerms.value = false
 }
 
 // Persistence
 watch(projectId, (newId) => {
   if (newId) {
     localStorage.setItem('last_project_id', newId)
+    currentPage.value = 1
+    clearSelectedTerms()
     refreshData()
   }
 })
@@ -266,8 +407,11 @@ onMounted(async () => {
   if (projectId.value) {
     await refreshData()
   }
+  else if (projects.value.length === 0) {
+    // There is no project to load, so show the normal empty state.
+    loadingTerms.value = false
+  }
 })
-
 
 const isGlobalEditing = ref(false)
 const originalTermsJson = ref('')
@@ -278,8 +422,14 @@ function enterEditMode() {
       description: '请先勾选左侧复选框，选中需要编辑的词条后再进入编辑模式。',
       action: {
         label: '知道了',
-        onClick: () => {}
-      }
+        onClick: () => {},
+      },
+    })
+    return
+  }
+  if (selectionMode.value === 'all_filtered') {
+    toast.info('跨页全选不支持表格内编辑', {
+      description: '批量编辑会直接修改单元格，请先取消跨页全选，再逐页勾选需要编辑的词条。',
     })
     return
   }
@@ -304,21 +454,23 @@ async function saveEditMode() {
       key: t.key,
       description: t.description,
       status: t.status,
-      translations: t.translations
+      translations: t.translations,
     }))
 
     await api.post({
       url: `/projects/${projectId.value}/terms/batch-update`,
-      data: { terms: payload }
+      data: { terms: payload },
     })
 
     toast.success('批量保存成功', { description: `已成功保存 ${payload.length} 个词条的更改。` })
     isGlobalEditing.value = false
-    originalTermsJson.value = ""
+    originalTermsJson.value = ''
     loadTerms() // 刷新最新状态
-  } catch (error: any) {
+  }
+  catch (error: any) {
     toast.error('保存失败', { description: error.message || '网络或服务器错误' })
-  } finally {
+  }
+  finally {
     isSavingBatch.value = false
   }
 }
@@ -338,12 +490,11 @@ const currentPage = ref(1)
 const pageSize = ref<number>(DEFAULT_PAGE_SIZE)
 
 const currentProject = computed(() => projects.value.find(project => String(project.id) === projectId.value))
-const visibleTerms = computed(() => terms.value.filter(term => !isTranslator.value || term.status !== 'draft'))
-const publishedTermCount = computed(() => visibleTerms.value.filter(term => term.status === 'published').length)
-const pendingTermCount = computed(() => visibleTerms.value.filter(term => term.status === 'pending').length)
-const readyTermCount = computed(() => visibleTerms.value.filter(isReadyForReview).length)
-const publishedRate = computed(() => visibleTerms.value.length
-  ? Math.round((publishedTermCount.value / visibleTerms.value.length) * 100)
+const publishedTermCount = computed(() => projectSummary.value.status_counts.published || 0)
+const pendingTermCount = computed(() => projectSummary.value.status_counts.pending || 0)
+const readyTermCount = computed(() => projectSummary.value.ready_review_count || 0)
+const publishedRate = computed(() => projectSummary.value.total
+  ? Math.round((publishedTermCount.value / projectSummary.value.total) * 100)
   : 0)
 const hasActiveFilters = computed(() => Boolean(
   searchQuery.value.trim()
@@ -378,11 +529,6 @@ async function clearSearchField(field: 'key' | 'zh' | 'en') {
   document.getElementById(fields[field].id)?.focus()
 }
 
-const modules = computed(() => {
-  const mods = new Set(terms.value.map(t => t.module))
-  return Array.from(mods)
-})
-
 function isReadyForReview(term: TermItem) {
   return term.status !== 'review'
     && term.status !== 'published'
@@ -390,62 +536,43 @@ function isReadyForReview(term: TermItem) {
     && getMissingTranslationLanguages(term).length === 0
 }
 
-const filteredTerms = computed(() => {
-  return terms.value.filter(term => {
-    const keyword = searchQuery.value.trim().toLowerCase()
-    const chineseKeyword = chineseSearchQuery.value.trim().toLowerCase()
-    const englishKeyword = englishSearchQuery.value.trim().toLowerCase()
+const paginatedTerms = computed(() => terms.value)
+const pageStart = computed(() => totalTerms.value === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1)
+const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, totalTerms.value))
 
-    // Search match
-    const matchSearch = !keyword
-      || term.key.toLowerCase().includes(keyword)
-      || term.module.toLowerCase().includes(keyword)
-    const chineseText = [
-      term.translations.cn,
-      term.translations.zh,
-      term.translations['zh-CN'],
-      term.translations.cht,
-    ].filter(Boolean).join('\n').toLowerCase()
-    const matchChinese = !chineseKeyword || chineseText.includes(chineseKeyword)
-    const matchEnglish = !englishKeyword || (term.translations.en || '').toLowerCase().includes(englishKeyword)
+let termsReloadTimer: number | undefined
+let suppressNextPageReload = false
 
-    // Module match
-    const matchModule = selectedModule.value === 'all' ||
-                        (selectedModule.value === '__none__' && term.module === '') ||
-                        term.module === selectedModule.value
+function scheduleTermsReload(delay = 0, resetPage = false) {
+  if (resetPage && currentPage.value !== 1) {
+    suppressNextPageReload = true
+    currentPage.value = 1
+  }
+  if (termsReloadTimer !== undefined)
+    window.clearTimeout(termsReloadTimer)
+  termsReloadTimer = window.setTimeout(() => loadTerms(), delay)
+}
 
-    // Status match
-    const matchStatus = selectedStatus.value === 'all'
-      || (selectedStatus.value === 'ready_review' ? isReadyForReview(term) : term.status === selectedStatus.value)
-
-    // Rule: Operations users cannot see drafts
-    const matchRole = !isTranslator.value || term.status !== 'draft'
-
-    return matchSearch && matchChinese && matchEnglish && matchModule && matchStatus && matchRole
-  })
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredTerms.value.length / pageSize.value)))
-const paginatedTerms = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredTerms.value.slice(start, start + pageSize.value)
-})
-const pageStart = computed(() => filteredTerms.value.length === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1)
-const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, filteredTerms.value.length))
-
-watch([searchQuery, chineseSearchQuery, englishSearchQuery, selectedModule, selectedStatus], () => {
-  currentPage.value = 1
+watch([searchQuery, chineseSearchQuery, englishSearchQuery], () => {
   clearSelectedTerms()
+  scheduleTermsReload(300, true)
+})
+
+watch([selectedModule, selectedStatus], () => {
+  clearSelectedTerms()
+  scheduleTermsReload(0, true)
 })
 
 watch(pageSize, () => {
-  currentPage.value = 1
+  scheduleTermsReload(0, true)
 })
 
-watch(totalPages, (nextTotalPages) => {
-  if (currentPage.value > nextTotalPages) {
-    currentPage.value = nextTotalPages
+watch(currentPage, () => {
+  if (suppressNextPageReload) {
+    suppressNextPageReload = false
+    return
   }
+  scheduleTermsReload()
 })
 
 function goToFirstPage() {
@@ -469,9 +596,8 @@ const statusOptions = [
   { value: 'pending', label: '待翻译', color: 'bg-yellow-500' },
   { value: 'ready_review', label: '待校对', color: 'bg-sky-500' },
   { value: 'review', label: '待发布', color: 'bg-blue-500' },
-  { value: 'published', label: '已发布', color: 'bg-green-500' }
+  { value: 'published', label: '已发布', color: 'bg-green-500' },
 ]
-
 
 function getStatusColor(status: string) {
   return statusOptions.find(o => o.value === status)?.color || 'bg-gray-500'
@@ -486,7 +612,7 @@ const newTermForm = ref({
   translations: targetLanguages.value.reduce((acc, lang) => {
     acc[lang.code] = ''
     return acc
-  }, {} as Translation)
+  }, {} as Translation),
 })
 
 function addNewTerm() {
@@ -497,7 +623,7 @@ function addNewTerm() {
     translations: targetLanguages.value.reduce((acc, lang) => {
       acc[lang.code] = ''
       return acc
-    }, {} as Translation)
+    }, {} as Translation),
   }
   showAddTermModal.value = true
 }
@@ -511,14 +637,16 @@ async function submitNewTerm() {
   try {
     await api.post({
       url: `/projects/${projectId.value}/terms`,
-      data: newTermForm.value
+      data: newTermForm.value,
     })
     toast.success('词条创建成功')
     showAddTermModal.value = false
     loadTerms()
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('创建失败', { description: e.message })
-  } finally {
+  }
+  finally {
     submittingTerm.value = false
   }
 }
@@ -540,7 +668,8 @@ async function confirmTranslate() {
 }
 
 async function translateRow(term: TermItem, customPrompt?: string) {
-  if (translatingTerms.value.has(term.id)) return
+  if (translatingTerms.value.has(term.id))
+    return
   if (!term.key) {
     toast.error('翻译失败', { description: '请先填写词条 Key 以后再进行翻译。' })
     return
@@ -555,14 +684,12 @@ async function translateRow(term: TermItem, customPrompt?: string) {
 
   translatingTerms.value.add(term.id)
   try {
-    // 格式指令（系统固定，不暴露给用户修改）
-    const systemInstruction = `\n\n格式要求：你必须返回一个合法的 JSON 对象。不要返回任何 Markdown 标记符（如 \`\`\`json ），不要返回任何解释。JSON 键名必须严格是以下代号：${targetLanguages.value.map(l => l.code).join(', ')}，对应的值为各语言翻译后的文本。若某语言不知如何翻译，返回空字符串 ""。${placeholderInstructionForTerm(term)}`
-
     // 构建用户提示词
     let userPrompt: string
     if (customPrompt) {
       userPrompt = customPrompt
-    } else {
+    }
+    else {
       const translationsStr = Object.entries(term.translations)
         .filter(([_, val]) => val)
         .map(([lang, val]) => `${lang}: ${val}`)
@@ -572,33 +699,20 @@ async function translateRow(term: TermItem, customPrompt?: string) {
         .replace('{translations}', translationsStr || '无')
     }
 
-    const fullPrompt = userPrompt + systemInstruction
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: fullPrompt,
-      config: { temperature: 0.2 }
+    const { translations: translatedData } = await requestAITranslation({
+      prompt: userPrompt,
+      targetLanguages: targetLanguages.value.map(lang => lang.code),
+      placeholderRule: placeholderInstructionForTerm(term),
     })
-
-    const result = response.text?.trim() || ''
-    const cleanJsonStr = result.replace(/^```json/gi, '').replace(/^```/g, '').replace(/```$/g, '').trim()
-
-    let translatedData = {}
-    try {
-      translatedData = JSON.parse(cleanJsonStr)
-    } catch(e) {
-      console.error('Failed to parse JSON from AI response:', cleanJsonStr)
-      throw new Error('AI 返回的数据格式无法解析为 JSON')
-    }
 
     // Backup for undo
     if (!stagedChangeOriginals.value.has(term.id)) {
       stagedChangeOriginals.value.set(term.id, JSON.stringify(term))
     }
 
-    targetLanguages.value.forEach(lang => {
-      if (translatedData[lang.code as keyof typeof translatedData] !== undefined) {
-        term.translations[lang.code] = translatedData[lang.code as keyof typeof translatedData] as string
+    targetLanguages.value.forEach((lang) => {
+      if (translatedData[lang.code] !== undefined) {
+        term.translations[lang.code] = translatedData[lang.code]
       }
     })
 
@@ -609,19 +723,21 @@ async function translateRow(term: TermItem, customPrompt?: string) {
       })
     }
 
-    if (!term.history) term.history = []
+    if (!term.history)
+      term.history = []
     term.history.unshift({
       time: new Date().toLocaleString(),
       action: '使用了 AI 进行了全语言自动翻译 (待确认)',
-      user: 'AI 助理'
+      user: 'AI 助理',
     })
     term.status = 'review'
     term.updatedAt = new Date().toLocaleString()
-
-  } catch (error) {
+  }
+  catch (error: unknown) {
     console.error('AI 翻译失败:', error)
-    toast.error('AI 翻译失败', { description: '请检查控制台或网络配置。' })
-  } finally {
+    toast.error('AI 翻译失败', { description: error instanceof Error ? error.message : '请求翻译服务失败，请稍后重试。' })
+  }
+  finally {
     translatingTerms.value.delete(term.id)
   }
 }
@@ -639,11 +755,12 @@ async function persistStagedRow(term: TermItem) {
         description: term.description,
         status: term.status,
         translations: term.translations,
-      }
+      },
     })
     stagedChangeOriginals.value.delete(term.id)
     toast.success('已应用翻译', { description: '内容也已保存到数据库。' })
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('保存失败', { description: e.message })
   }
 }
@@ -659,16 +776,70 @@ function discardStagedRow(term: TermItem) {
 }
 
 const selectedTermIds = ref<string[]>([])
+const selectedTermCache = ref(new Map<string, TermItem>())
+const selectionMode = ref<'explicit' | 'all_filtered'>('explicit')
+const excludedTermIds = ref<string[]>([])
+const excludedTermCache = ref(new Map<string, TermItem>())
+
+function syncSelectedTermCacheFromPage() {
+  terms.value.forEach((term) => {
+    const id = String(term.id)
+    if (selectionMode.value === 'explicit' && selectedTermIds.value.includes(id)) {
+      selectedTermCache.value.set(id, term)
+    }
+    if (selectionMode.value === 'all_filtered' && excludedTermIds.value.includes(id)) {
+      excludedTermCache.value.set(id, term)
+    }
+  })
+}
 
 function isTermSelected(term: TermItem) {
+  if (selectionMode.value === 'all_filtered') {
+    return !excludedTermIds.value.includes(String(term.id))
+  }
   return selectedTermIds.value.some(id => String(id) === String(term.id))
 }
 
 const selectedTermsForBulk = computed(() => {
-  return terms.value.filter(term => isTermSelected(term))
+  return Array.from(selectedTermCache.value.values())
 })
 
-const selectedCount = computed(() => selectedTermsForBulk.value.length)
+const selectedCount = computed(() => selectionMode.value === 'all_filtered'
+  ? Math.max(0, totalTerms.value - excludedTermIds.value.length)
+  : selectedTermIds.value.length)
+
+const selectedStatusCounts = computed<TermStatusCounts>(() => {
+  const counts: TermStatusCounts = selectionMode.value === 'all_filtered'
+    ? { ...filteredStatusCounts.value }
+    : { draft: 0, pending: 0, review: 0, published: 0 }
+
+  if (selectionMode.value === 'all_filtered') {
+    excludedTermCache.value.forEach((term) => {
+      counts[term.status] = Math.max(0, counts[term.status] - 1)
+    })
+  }
+  else {
+    selectedTermCache.value.forEach((term) => {
+      counts[term.status]++
+    })
+  }
+  return counts
+})
+
+const selectedStatusSummary = computed(() => [
+  ['草稿', selectedStatusCounts.value.draft],
+  ['待翻译', selectedStatusCounts.value.pending],
+  ['待发布', selectedStatusCounts.value.review],
+  ['已发布', selectedStatusCounts.value.published],
+].filter(([, count]) => Number(count) > 0).map(([label, count]) => `${label} ${count}`).join(' · '))
+
+async function resolveSelectedTerms() {
+  if (selectionMode.value === 'explicit') {
+    return Array.from(selectedTermCache.value.values())
+  }
+  const excluded = new Set(excludedTermIds.value)
+  return (await fetchAllMatchingTerms()).filter(term => !excluded.has(String(term.id)))
+}
 
 const stagedSelectedTerms = computed(() => {
   return selectedTermsForBulk.value.filter(term => stagedChangeOriginals.value.has(term.id))
@@ -679,7 +850,8 @@ const stagedSelectedIds = computed(() => {
 })
 
 async function batchPersistStaged() {
-  if (stagedSelectedTerms.value.length === 0) return
+  if (stagedSelectedTerms.value.length === 0)
+    return
   let successCount = 0
 
   for (const term of stagedSelectedTerms.value) {
@@ -692,11 +864,12 @@ async function batchPersistStaged() {
           description: term.description,
           status: term.status,
           translations: term.translations,
-        }
+        },
       })
       stagedChangeOriginals.value.delete(term.id)
       successCount++
-    } catch (e) {
+    }
+    catch (e) {
       console.error(`Failed to persist ${term.id}`, e)
     }
   }
@@ -704,17 +877,17 @@ async function batchPersistStaged() {
 }
 
 function batchDiscardStaged() {
-  if (stagedSelectedTerms.value.length === 0) return
+  if (stagedSelectedTerms.value.length === 0)
+    return
   const count = stagedSelectedTerms.value.length
 
-  stagedSelectedTerms.value.forEach(term => {
+  stagedSelectedTerms.value.forEach((term) => {
     discardStagedRow(term)
   })
   toast.info('已批量撤销', { description: `已恢复 ${count} 个词条。` })
 }
 
 const isBatchTranslating = ref(false)
-const showBatchDeleteDialog = ref(false)
 const showSettingsModal = ref(false)
 const pendingBatchTranslate = ref(false) // 批量自定义提示词弹窗状态
 const globalPrompt = ref(`翻译以下内容，这是一个智能体APP的内容并将其翻译为本地化语言。
@@ -733,18 +906,20 @@ const isIndeterminate = computed(() => {
 })
 
 const checkboxAllState = computed(() => {
-  if (isAllSelected.value) return true
-  if (isIndeterminate.value) return 'indeterminate'
+  if (isAllSelected.value)
+    return true
+  if (isIndeterminate.value)
+    return 'indeterminate'
   return false
 })
 
 const isAllFilteredSelected = computed(() => {
-  return filteredTerms.value.length > 0 && filteredTerms.value.every(term => isTermSelected(term))
+  return selectionMode.value === 'all_filtered' && excludedTermIds.value.length === 0
 })
 
 const canSelectAllFiltered = computed(() => {
   return paginatedTerms.value.length > 0
-    && filteredTerms.value.length > paginatedTerms.value.length
+    && totalTerms.value > paginatedTerms.value.length
     && isAllSelected.value
     && !isAllFilteredSelected.value
 })
@@ -752,39 +927,86 @@ const canSelectAllFiltered = computed(() => {
 function toggleSelectTerm(id: string, checked: any) {
   const isChecked = checked === true || checked === 'true'
   const normalizedId = String(id)
+  const term = terms.value.find(item => String(item.id) === normalizedId)
+  if (selectionMode.value === 'all_filtered') {
+    if (isChecked) {
+      excludedTermIds.value = excludedTermIds.value.filter(item => item !== normalizedId)
+      excludedTermCache.value.delete(normalizedId)
+    }
+    else if (!excludedTermIds.value.includes(normalizedId)) {
+      excludedTermIds.value = [...excludedTermIds.value, normalizedId]
+      if (term)
+        excludedTermCache.value.set(normalizedId, term)
+    }
+    return
+  }
   if (isChecked) {
     if (!selectedTermIds.value.includes(normalizedId)) {
       selectedTermIds.value = [...selectedTermIds.value, normalizedId]
+      if (term)
+        selectedTermCache.value.set(normalizedId, term)
     }
-  } else {
+  }
+  else {
     selectedTermIds.value = selectedTermIds.value.filter(i => i !== normalizedId)
+    selectedTermCache.value.delete(normalizedId)
   }
 }
 
 function handleSelectAll(checked: any) {
   const isChecked = checked === true || checked === 'true'
   const pageIds = paginatedTerms.value.map(t => String(t.id))
+  if (selectionMode.value === 'all_filtered') {
+    if (isChecked) {
+      excludedTermIds.value = excludedTermIds.value.filter(id => !pageIds.includes(id))
+      pageIds.forEach(id => excludedTermCache.value.delete(id))
+    }
+    else {
+      excludedTermIds.value = Array.from(new Set([...excludedTermIds.value, ...pageIds]))
+      paginatedTerms.value.forEach(term => excludedTermCache.value.set(String(term.id), term))
+    }
+    return
+  }
   if (isChecked) {
     selectedTermIds.value = Array.from(new Set([...selectedTermIds.value, ...pageIds]))
-  } else {
+    paginatedTerms.value.forEach(term => selectedTermCache.value.set(String(term.id), term))
+  }
+  else {
     selectedTermIds.value = selectedTermIds.value.filter(id => !pageIds.includes(id))
+    pageIds.forEach(id => selectedTermCache.value.delete(id))
   }
 }
 
 function selectAllFilteredTerms() {
-  selectedTermIds.value = filteredTerms.value.map(term => String(term.id))
+  selectionMode.value = 'all_filtered'
+  selectedTermIds.value = []
+  selectedTermCache.value.clear()
+  excludedTermIds.value = []
+  excludedTermCache.value.clear()
   toast.success('已选择全部筛选结果', {
     description: `共 ${selectedCount.value} 条词条。`,
   })
 }
 
 function clearSelectedTerms() {
+  selectionMode.value = 'explicit'
   selectedTermIds.value = []
+  selectedTermCache.value.clear()
+  excludedTermIds.value = []
+  excludedTermCache.value.clear()
 }
 
 async function batchTranslate(customPrompt?: string) {
-  const termsToTranslate = selectedTermsForBulk.value
-  if (termsToTranslate.length === 0) return
+  let termsToTranslate: TermItem[]
+  try {
+    termsToTranslate = await resolveSelectedTerms()
+  }
+  catch (error: any) {
+    toast.error('无法读取全部选中词条', { description: error.message })
+    return
+  }
+  if (termsToTranslate.length === 0)
+    return
   isBatchTranslating.value = true
   let successCount = 0
   let failCount = 0
@@ -809,7 +1031,8 @@ async function batchTranslate(customPrompt?: string) {
           }
           await translateRow(term, termPrompt)
           successCount++
-        } catch (error) {
+        }
+        catch (error) {
           failCount++
         }
       }
@@ -821,192 +1044,172 @@ async function batchTranslate(customPrompt?: string) {
 
   if (failCount > 0) {
     toast.warning('批量翻译完成', {
-      description: `成功: ${successCount}，失败: ${failCount}。可能是 AI 响应超时或由于并发限制导致。`
+      description: `成功: ${successCount}，失败: ${failCount}。可能是 AI 响应超时或由于并发限制导致。`,
     })
-  } else {
+  }
+  else {
     toast.success('批量翻译成功', {
-      description: `已成功为您翻译了 ${successCount} 个选中的词条。`
+      description: `已成功为您翻译了 ${successCount} 个选中的词条。`,
     })
   }
 }
 
 function openBatchTranslateDialog() {
-  if (selectedCount.value === 0) return
+  if (selectedCount.value === 0)
+    return
   // 预填全局提示词（保留变量占位符，因为批量时每个词条居中注入）
   tempPrompt.value = globalPrompt.value
   pendingBatchTranslate.value = true
 }
 
-const isBatchPublishing = ref(false)
-const isBatchApprovingReview = ref(false)
+const publishableSelectedCount = computed(() => selectedStatusCounts.value.review)
+const reviewableSelectedCount = computed(() => selectedStatusCounts.value.draft + selectedStatusCounts.value.pending)
+const deletableSelectedCount = computed(() => selectedCount.value - selectedStatusCounts.value.published)
 
-const publishableSelectedTerms = computed(() => {
-  return selectedTermsForBulk.value.filter(term => term.status === 'review')
-})
+const bulkActionMeta: Record<BulkOperation, { title: string, verb: string, description: string, success: string }> = {
+  approve_review: {
+    title: '确认批量校对通过？',
+    verb: '校对通过',
+    description: '可执行词条将进入待发布状态。',
+    success: '批量校对完成',
+  },
+  publish: {
+    title: '确认批量发布？',
+    verb: '发布',
+    description: '可执行词条将立即更新线上内容。',
+    success: '批量发布完成',
+  },
+  delete: {
+    title: '确认批量删除？',
+    verb: '永久删除',
+    description: '可执行词条及其翻译将被永久删除，此操作不可恢复。',
+    success: '批量删除完成',
+  },
+}
 
-const publishableSelectedIds = computed(() => {
-  return publishableSelectedTerms.value.map(term => String(term.id))
-})
+const bulkSkipReasonLabels: Record<string, string> = {
+  status_not_allowed: '状态不符合要求',
+  published_protected: '已发布词条受保护',
+  missing_key: '缺少 Key',
+  missing_translation: '缺少必填语言译文',
+  placeholder_mismatch: '占位符不一致',
+}
 
-const reviewableSelectedTerms = computed(() => {
-  return selectedTermsForBulk.value.filter(term => term.status !== 'review' && term.status !== 'published')
-})
+const showBulkConfirmDialog = ref(false)
+const pendingBulkOperation = ref<BulkOperation | null>(null)
+const pendingBulkScope = ref<TermBulkScope | null>(null)
+const bulkPreview = ref<TermBulkResult | null>(null)
+const isBulkPreviewing = ref(false)
+const isBulkExecuting = ref(false)
+const bulkActionError = ref('')
+const isAnyBulkActionBusy = computed(() => isBulkPreviewing.value || isBulkExecuting.value)
 
-const reviewableSelectedIds = computed(() => {
-  return reviewableSelectedTerms.value.map(term => String(term.id))
-})
+const activeBulkMeta = computed(() => pendingBulkOperation.value
+  ? bulkActionMeta[pendingBulkOperation.value]
+  : null)
 
-async function batchApproveReview() {
-  if (selectedCount.value === 0) return
-  const selectedTerms = reviewableSelectedTerms.value
-
-  if (selectedTerms.length === 0) {
-    toast.info('未找到可校对的词条', { description: '待发布和已发布词条会被自动跳过。' })
-    return
+function getBulkScope(): TermBulkScope {
+  if (selectionMode.value === 'all_filtered') {
+    return {
+      mode: 'filtered',
+      filter: getTermFilterParams(),
+      excluded_ids: excludedTermIds.value.map(Number),
+    }
   }
-
-  const invalidMessages: string[] = []
-  selectedTerms.forEach(term => {
-    if (!term.key?.trim()) {
-      invalidMessages.push(`${term.key || term.id}: 缺少 Key`)
-      return
-    }
-
-    const missingLangs = getMissingTranslationLanguages(term)
-    if (missingLangs.length > 0) {
-      invalidMessages.push(`${term.key}: 缺少 ${missingLangs.map(lang => lang.name).join('、')}`)
-      return
-    }
-
-    if (getTermPlaceholderIssues(term).length > 0) {
-      invalidMessages.push(`${term.key}: ${formatPlaceholderIssues(term)}`)
-    }
-  })
-
-  if (invalidMessages.length > 0) {
-    toast.error('无法批量校对通过', {
-      description: invalidMessages.slice(0, 3).join('；'),
-    })
-    return
-  }
-
-  isBatchApprovingReview.value = true
-  try {
-    const payload = selectedTerms.map(term => ({
-      id: term.id,
-      module: term.module,
-      key: term.key,
-      description: term.description,
-      status: 'review',
-      translations: term.translations,
-    }))
-
-    await api.post({
-      url: `/projects/${projectId.value}/terms/batch-update`,
-      data: { terms: payload },
-    })
-
-    selectedTerms.forEach(term => {
-      term.status = 'review'
-    })
-
-    toast.success('批量校对通过', { description: `已将 ${selectedTerms.length} 个词条设为待发布。` })
-  } catch (e: any) {
-    toast.error('批量校对失败', { description: e.message })
-    loadTerms()
-  } finally {
-    isBatchApprovingReview.value = false
+  return {
+    mode: 'explicit',
+    ids: selectedTermIds.value.map(Number),
   }
 }
 
-async function batchPublish() {
-  const ids = publishableSelectedTerms.value.map(term => Number(term.id))
-  const publishedIds = publishableSelectedTerms.value.map(term => String(term.id))
+function getDataScope(): TermBulkScope {
+  if (selectedCount.value > 0)
+    return getBulkScope()
+  return {
+    mode: 'filtered',
+    filter: getTermFilterParams(),
+    excluded_ids: [],
+  }
+}
 
-  if (ids.length === 0) {
-    toast.info('未找到可发布的词条', { description: '只有处于“待发布”状态的词条才能被发布。' })
+function isBulkActionBusy(operation: BulkOperation) {
+  return pendingBulkOperation.value === operation && (isBulkPreviewing.value || isBulkExecuting.value)
+}
+
+async function requestBulkAction(operation: BulkOperation) {
+  if (selectedCount.value === 0 || isBulkPreviewing.value || isBulkExecuting.value)
     return
-  }
 
-  if (ids.length < selectedCount.value) {
-    toast.warning('部分选中词条已被跳过', { description: '自动忽略了处于草稿、待翻译或已发布状态的词条。只有“待发布”词条会被发布。' })
-  }
-
-  const invalidTerms = terms.value.filter(term => ids.includes(Number(term.id)) && getTermPlaceholderIssues(term).length > 0)
-  if (invalidTerms.length > 0) {
-    toast.error('占位符不一致，无法批量发布', {
-      description: invalidTerms.slice(0, 3).map(term => `${term.key || term.id}: ${formatPlaceholderIssues(term)}`).join('；'),
-    })
-    return
-  }
-
-  isBatchPublishing.value = true
-
+  const scope = getBulkScope()
+  pendingBulkOperation.value = operation
+  pendingBulkScope.value = scope
+  bulkPreview.value = null
+  bulkActionError.value = ''
+  isBulkPreviewing.value = true
   try {
-    await api.post({
-      url: `/projects/${projectId.value}/terms/batch-publish`,
-      data: { ids }
+    const response = await api.post<TermBulkResult>({
+      url: `/projects/${projectId.value}/terms/bulk/preview`,
+      data: { operation, scope },
     })
-
-    terms.value.forEach(t => {
-      if (ids.includes(Number(t.id))) {
-        t.status = 'published'
-      }
-    })
-
-    // 清除选中的可发布词条，如果原本有因为状态不符没发出去的，保留在勾选列表里方便用户查看
-    selectedTermIds.value = selectedTermIds.value.filter(id => !publishedIds.includes(id))
-
-    toast.success('批量发布成功', { description: `已成功发布 ${ids.length} 个待发布词条。` })
-  } catch (e: any) {
-    toast.error('发布失败', { description: e.message })
-    loadTerms()
-  } finally {
-    isBatchPublishing.value = false
+    bulkPreview.value = response.data
+    if (response.data.executable === 0) {
+      toast.info(`没有可${bulkActionMeta[operation].verb}的词条`, {
+        description: response.data.skipped > 0 ? '选中词条均未通过服务端预检查。' : '当前选择范围为空。',
+      })
+      return
+    }
+    showBulkConfirmDialog.value = true
   }
+  catch (error: any) {
+    toast.error('批量操作预检查失败', { description: error.message })
+  }
+  finally {
+    isBulkPreviewing.value = false
+  }
+}
+
+function handleBulkDialogOpen(open: boolean) {
+  if (!open && isBulkExecuting.value)
+    return
+  showBulkConfirmDialog.value = open
+  if (!open)
+    bulkActionError.value = ''
+}
+
+async function confirmBulkAction() {
+  if (!pendingBulkOperation.value || !pendingBulkScope.value || isBulkExecuting.value)
+    return
+
+  const operation = pendingBulkOperation.value
+  isBulkExecuting.value = true
+  bulkActionError.value = ''
+  try {
+    const response = await api.post<TermBulkResult>({
+      url: `/projects/${projectId.value}/terms/bulk/execute`,
+      data: { operation, scope: pendingBulkScope.value },
+    })
+    const result = response.data
+    showBulkConfirmDialog.value = false
+    clearSelectedTerms()
+    await loadTerms()
+    toast.success(bulkActionMeta[operation].success, {
+      description: `成功 ${result.succeeded} 条，跳过 ${result.skipped} 条。`,
+    })
+  }
+  catch (error: any) {
+    bulkActionError.value = error.message || '服务端未能完成操作，请重试。'
+  }
+  finally {
+    isBulkExecuting.value = false
+  }
+}
+
+function batchApproveReview() {
+  requestBulkAction('approve_review')
 }
 
 function batchDelete() {
-  if (selectedCount.value === 0) {
-    toast.info('请先选择要删除的词条')
-    return
-  }
-  showBatchDeleteDialog.value = true
-}
-
-async function confirmBatchDelete() {
-  const publishedCount = selectedTermsForBulk.value.filter(term => term.status === 'published').length
-
-  const ids = selectedTermsForBulk.value
-    .filter(term => term.status !== 'published')
-    .map(term => Number(term.id))
-
-  if (ids.length === 0) {
-    toast.error('暂无可删除的词条', { description: '已发布内容禁止批量删除。' })
-    showBatchDeleteDialog.value = false
-    return
-  }
-
-  try {
-    await api.post({
-      url: `/projects/${projectId.value}/terms/batch-delete`,
-      data: { ids }
-    })
-
-    // 等到后端确认删除成功后，再从本地列表剔除并弹出提示
-    terms.value = terms.value.filter(t => !ids.includes(Number(t.id)))
-    selectedTermIds.value = []
-    showBatchDeleteDialog.value = false
-
-    let description = `已删除 ${ids.length} 个词条。`
-    if (publishedCount > 0) {
-      description += ` 其中 ${publishedCount} 个已发布项被自动忽略。`
-    }
-    toast.success('批量删除成功', { description })
-  } catch (e: any) {
-    toast.error('删除失败', { description: e.message })
-    loadTerms() // 同步最新的真实数据
-  }
+  requestBulkAction('delete')
 }
 
 // Removed activeEditKey and startEdit/stopEdit as they are replaced by Global Edit Mode
@@ -1018,7 +1221,8 @@ async function deleteTerm(id: string | number) {
     // 后端真正删除成功后，更新视图
     terms.value = terms.value.filter(t => Number(t.id) !== Number(id))
     toast.success('删除成功')
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('删除失败', { description: e.message })
     loadTerms()
   }
@@ -1029,7 +1233,8 @@ function handleKeyUpdate(term: TermItem) {
     if (term.status === 'draft') {
       term.status = 'pending'
     }
-  } else {
+  }
+  else {
     term.status = 'draft'
   }
 }
@@ -1198,6 +1403,8 @@ async function submitBatchCreate() {
 const showExportModal = ref(false)
 const selectedExportLangs = ref<string[]>([])
 const isExportingJson = ref(false)
+const isExportingExcel = ref(false)
+const copyingLanguageCode = ref('')
 const isDrawerOpen = ref(false)
 const activeDrawerTerm = ref<TermItem | null>(null)
 const presentDeletingId = ref<string | null>(null)
@@ -1209,24 +1416,28 @@ function openDrawer(term: TermItem) {
 }
 
 const isDrawerDirty = computed(() => {
-  if (!activeDrawerTerm.value) return false
+  if (!activeDrawerTerm.value)
+    return false
   const originalTerm = terms.value.find(t => Number(t.id) === Number(activeDrawerTerm.value!.id))
   return JSON.stringify(originalTerm) !== JSON.stringify(activeDrawerTerm.value)
 })
 
 const canPublishInDrawer = computed(() => {
-  if (!activeDrawerTerm.value || isTranslator.value) return false
+  if (!activeDrawerTerm.value || isTranslator.value)
+    return false
   const originalTerm = terms.value.find(t => Number(t.id) === Number(activeDrawerTerm.value!.id))
   return originalTerm?.status === 'review' && !isDrawerDirty.value
 })
 
 const canApproveReviewInDrawer = computed(() => {
-  if (!activeDrawerTerm.value || isTranslator.value) return false
+  if (!activeDrawerTerm.value || isTranslator.value)
+    return false
   return activeDrawerTerm.value.status !== 'review' && activeDrawerTerm.value.status !== 'published'
 })
 
 const isDrawerTermPublished = computed(() => {
-  if (!activeDrawerTerm.value) return false
+  if (!activeDrawerTerm.value)
+    return false
   const originalTerm = terms.value.find(t => Number(t.id) === Number(activeDrawerTerm.value!.id))
   return originalTerm?.status === 'published'
 })
@@ -1239,7 +1450,8 @@ const showDrawerSaveConfirmModal = ref(false)
 function triggerDrawerSave() {
   if (isDrawerTermPublished.value && isDrawerDirty.value) {
     showDrawerSaveConfirmModal.value = true
-  } else {
+  }
+  else {
     saveDrawer()
   }
 }
@@ -1252,7 +1464,8 @@ function confirmDrawerSave() {
 }
 
 async function saveDrawer() {
-  if (!activeDrawerTerm.value) return
+  if (!activeDrawerTerm.value)
+    return
   savingDrawer.value = true
   try {
     await api.post({
@@ -1263,15 +1476,17 @@ async function saveDrawer() {
         description: activeDrawerTerm.value.description,
         status: activeDrawerTerm.value.status,
         translations: activeDrawerTerm.value.translations,
-      }
+      },
     })
     toast.success('更新成功', { description: '词条详情已保存。' })
     isDrawerOpen.value = false
     activeDrawerTerm.value = null
     loadTerms()
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('保存失败', { description: e.message })
-  } finally {
+  }
+  finally {
     savingDrawer.value = false
   }
 }
@@ -1281,7 +1496,8 @@ function getMissingTranslationLanguages(term: TermItem) {
 }
 
 async function approveDrawerReview() {
-  if (!activeDrawerTerm.value) return
+  if (!activeDrawerTerm.value)
+    return
 
   if (!activeDrawerTerm.value.key?.trim()) {
     toast.error('无法校对通过', { description: '请先填写词条 Key。' })
@@ -1321,9 +1537,11 @@ async function approveDrawerReview() {
     isDrawerOpen.value = false
     activeDrawerTerm.value = null
     loadTerms()
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('校对失败', { description: e.message })
-  } finally {
+  }
+  finally {
     approvingReview.value = false
   }
 }
@@ -1338,7 +1556,8 @@ function confirmDrawerPublish() {
 }
 
 async function publishTerm() {
-  if (!activeDrawerTerm.value) return
+  if (!activeDrawerTerm.value)
+    return
   const placeholderIssues = getTermPlaceholderIssues(activeDrawerTerm.value)
   if (placeholderIssues.length > 0) {
     toast.error('占位符不一致，无法发布', {
@@ -1354,9 +1573,11 @@ async function publishTerm() {
     isDrawerOpen.value = false
     activeDrawerTerm.value = null
     loadTerms()
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('发布失败', { description: e.message })
-  } finally {
+  }
+  finally {
     publishingTerm.value = false
   }
 }
@@ -1388,18 +1609,15 @@ Key: ${activeDrawerTerm.value.key}
 描述: ${activeDrawerTerm.value.description || '无'}
 现有参考:
 ${JSON.stringify(activeDrawerTerm.value.translations)}
-${placeholderInstructionForTerm(activeDrawerTerm.value)}
 `
-    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt })
-    const text = response.text || ''
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('解析 JSON 失败')
-
-    const translatedData = JSON.parse(jsonMatch[0])
-    targetLanguages.value.forEach(lang => {
-      if (translatedData[lang.code as keyof typeof translatedData] !== undefined) {
-        activeDrawerTerm.value!.translations[lang.code] = translatedData[lang.code as keyof typeof translatedData] as string
+    const { translations: translatedData } = await requestAITranslation({
+      prompt,
+      targetLanguages: targetLanguages.value.map(lang => lang.code),
+      placeholderRule: placeholderInstructionForTerm(activeDrawerTerm.value),
+    })
+    targetLanguages.value.forEach((lang) => {
+      if (translatedData[lang.code] !== undefined) {
+        activeDrawerTerm.value!.translations[lang.code] = translatedData[lang.code]
       }
     })
 
@@ -1412,26 +1630,24 @@ ${placeholderInstructionForTerm(activeDrawerTerm.value)}
 
     if (activeDrawerTerm.value!.status === 'published') {
       activeDrawerTerm.value!.status = 'review'
-    } else if (activeDrawerTerm.value!.status === 'draft') {
+    }
+    else if (activeDrawerTerm.value!.status === 'draft') {
       activeDrawerTerm.value!.status = 'pending'
     }
 
     toast.success('AI 翻译完成 (未保存)', { description: '请复核后点击保存。' })
-  } catch (error) {
+  }
+  catch (error: unknown) {
     console.error('Drawer AI translation error', error)
-    toast.error('AI 翻译失败')
-  } finally {
+    toast.error('AI 翻译失败', { description: error instanceof Error ? error.message : '请求翻译服务失败，请稍后重试。' })
+  }
+  finally {
     translatingDrawer.value = false
   }
 }
 
-const showBatchPublishConfirmModal = ref(false)
 function triggerBatchPublish() {
-  showBatchPublishConfirmModal.value = true
-}
-function confirmBatchPublish() {
-  showBatchPublishConfirmModal.value = false
-  batchPublish()
+  requestBulkAction('publish')
 }
 
 function closeDrawer() {
@@ -1482,7 +1698,8 @@ function flattenObjectImport(data: Record<string, unknown>) {
       return
     }
 
-    if (!value || Array.isArray(value) || typeof value !== 'object') return
+    if (!value || Array.isArray(value) || typeof value !== 'object')
+      return
 
     Object.entries(value as Record<string, unknown>).forEach(([childKey, childValue]) => {
       visit(childValue, [...path, childKey], module)
@@ -1526,8 +1743,9 @@ function normalizeJsonImport(data: unknown, mode: 'flat' | 'object') {
 function parsePastedObject(input: string) {
   try {
     return JSON.parse(input)
-  } catch {
-    return Function(`"use strict"; return (${input});`)()
+  }
+  catch {
+    return new Function(`"use strict"; return (${input});`)()
   }
 }
 
@@ -1571,12 +1789,15 @@ async function submitObjectImport() {
       showObjectImportModal.value = false
       objectImportText.value = ''
       loadTerms()
-    } else {
+    }
+    else {
       toast.error('导入失败', { description: res.message })
     }
-  } catch (e: any) {
+  }
+  catch (e: any) {
     toast.error('导入失败', { description: e.message })
-  } finally {
+  }
+  finally {
     importingObjectJson.value = false
   }
 }
@@ -1584,7 +1805,8 @@ async function submitObjectImport() {
 async function handleJsonImport(event: Event) {
   const target = event.target as HTMLInputElement
   const files = target.files
-  if (!files || files.length === 0) return
+  if (!files || files.length === 0)
+    return
 
   const validCodes = availableLanguages.value.map(lang => lang.code)
   const projectCodes = targetLanguages.value.map(l => l.code)
@@ -1616,32 +1838,36 @@ async function handleJsonImport(event: Event) {
       const items = normalizeJsonImport(data, 'flat')
       const res = await api.post<any>({
         url: `/projects/${projectId.value}/terms/import-json`,
-        data: { language_code: langCode, items }
+        data: { language_code: langCode, items },
       })
       if (res.code === 200) {
         totalCreated += res.data.created
         totalUpdated += res.data.updated
-      } else {
+      }
+      else {
         errors.push(`「${file.name}」：${res.message}`)
       }
-    } catch (e: any) {
+    }
+    catch (e: any) {
       errors.push(`「${file.name}」：${e.message}`)
     }
   }
 
   if (errors.length > 0) {
     toast.warning(`导入完成（含 ${errors.length} 个错误）`, {
-      description: errors.join('\n')
+      description: errors.join('\n'),
     })
-  } else {
+  }
+  else {
     toast.success(`全部导入成功（${files.length} 个文件）`, {
-      description: `新建词条：${totalCreated} 个，更新翻译：${totalUpdated} 条`
+      description: `新建词条：${totalCreated} 个，更新翻译：${totalUpdated} 条`,
     })
   }
 
   loadTerms()
   importingJson.value = false
-  if (target) target.value = ''
+  if (target)
+    target.value = ''
 }
 
 async function handleExcelImport(event: Event) {
@@ -1836,57 +2062,50 @@ async function handleExcelImport(event: Event) {
 const defaultExcludedLangs = ['tr', 'bn', 'pl', 'it']
 
 async function copyLangJson(langCode: string, langName: string) {
-  const hasSelected = selectedCount.value > 0
-  const itemsToExport = hasSelected
-    ? selectedTermsForBulk.value
-    : filteredTerms.value
-
-  if (!itemsToExport || itemsToExport.length === 0) {
-    toast.warning('剪贴板提取失败', { description: '抱歉，当前页面或选中列表中没有词条供导出。' })
+  if (copyingLanguageCode.value)
     return
-  }
-
-  // 构建嵌套结构
-  const exportObject: any = {}
-  itemsToExport.forEach(term => {
-    const val = term.translations[langCode] || ''
-    if (term.module) {
-      if (!exportObject[term.module]) exportObject[term.module] = {}
-      exportObject[term.module][term.key] = val
-    } else {
-      exportObject[term.key] = val
-    }
-  })
-
+  copyingLanguageCode.value = langCode
   try {
-    const jsonStr = JSON.stringify(exportObject, null, 2)
+    const response = await api.post<{ content: string, count: number }>({
+      url: `/projects/${projectId.value}/terms/export/copy`,
+      data: {
+        scope: getDataScope(),
+        language: langCode,
+      },
+    })
+    const jsonStr = response.data.content
 
     // Fallback for non-HTTPS (like local network IP) where navigator.clipboard is undefined
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(jsonStr)
-    } else {
-      const textArea = document.createElement("textarea")
+    }
+    else {
+      const textArea = document.createElement('textarea')
       textArea.value = jsonStr
-      textArea.style.position = "fixed"
-      textArea.style.left = "-999999px"
-      textArea.style.top = "-999999px"
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-999999px'
+      textArea.style.top = '-999999px'
       document.body.appendChild(textArea)
       textArea.focus()
       textArea.select()
 
       const successful = document.execCommand('copy')
       document.body.removeChild(textArea)
-      if (!successful) throw new Error('Fallback copy command failed')
+      if (!successful)
+        throw new Error('Fallback copy command failed')
     }
 
     toast.success('复制成功', {
-      description: `已成功复制【${langName}】的所有词条配置 JSON！`
+      description: `已复制【${langName}】的 ${response.data.count} 条词条 JSON。`,
     })
-  } catch (error) {
-    console.error('Failed to copy:', error)
+  }
+  catch (error: any) {
     toast.error('复制失败', {
-      description: '写入剪贴板失败，请检查浏览器权限。'
+      description: error.message || '写入剪贴板失败，请检查浏览器权限。',
     })
+  }
+  finally {
+    copyingLanguageCode.value = ''
   }
 }
 
@@ -1905,7 +2124,8 @@ function toggleExportLang(code: string) {
   const index = selectedExportLangs.value.indexOf(code)
   if (index > -1) {
     selectedExportLangs.value.splice(index, 1)
-  } else {
+  }
+  else {
     selectedExportLangs.value.push(code)
   }
 }
@@ -1918,37 +2138,6 @@ function deselectAllExportLangs() {
   selectedExportLangs.value = []
 }
 
-function createJsonExportObject(langCode: string, itemsToExport: TermItem[]) {
-  const exportObject: Record<string, string | Record<string, string>> = {}
-
-  itemsToExport.forEach((term) => {
-    const value = term.translations[langCode] || ''
-    if (term.module) {
-      const moduleValue = exportObject[term.module]
-      const moduleTranslations = typeof moduleValue === 'object' ? moduleValue : {}
-      moduleTranslations[term.key] = value
-      exportObject[term.module] = moduleTranslations
-    } else {
-      exportObject[term.key] = value
-    }
-  })
-
-  return exportObject
-}
-
-async function createZipArchive(files: Record<string, Uint8Array>) {
-  const { zip } = await import('fflate')
-  return new Promise<Uint8Array>((resolve, reject) => {
-    zip(files, { level: 6 }, (error, data) => {
-      if (error) {
-        reject(error)
-        return
-      }
-      resolve(data)
-    })
-  })
-}
-
 function getJsonArchiveName() {
   const projectName = String(currentProject.value?.name || 'translations')
     .trim()
@@ -1959,93 +2148,67 @@ function getJsonArchiveName() {
   return `${projectName}_locales_${date}.zip`
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 async function confirmExport() {
   if (selectedExportLangs.value.length === 0) {
     toast.warning('导出提醒', { description: '请至少选择一种语言导出！' })
     return
   }
 
-  const langsToExport = targetLanguages.value.filter(lang => selectedExportLangs.value.includes(lang.code))
-  const hasSelected = selectedCount.value > 0
-  const itemsToExport = hasSelected
-    ? selectedTermsForBulk.value
-    : filteredTerms.value
-
-  if (!itemsToExport.length) {
-    toast.warning('导出提醒', { description: '当前筛选结果或选中列表中没有可导出的词条。' })
-    return
-  }
-
   isExportingJson.value = true
   try {
-    const { strToU8 } = await import('fflate')
-    const files: Record<string, Uint8Array> = {}
-    langsToExport.forEach((lang) => {
-      const exportObject = createJsonExportObject(lang.code, itemsToExport)
-      files[`${lang.code}.json`] = strToU8(JSON.stringify(exportObject, null, 2))
+    const result = await api.downloadPost({
+      url: `/projects/${projectId.value}/terms/export/json`,
+      data: {
+        scope: getDataScope(),
+        languages: selectedExportLangs.value,
+      },
     })
-
-    const archive = await createZipArchive(files)
-    const blob = new Blob([archive], { type: 'application/zip' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = getJsonArchiveName()
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    downloadBlob(result.blob, getJsonArchiveName())
 
     toast.success('导出成功', {
-      description: `已将 ${langsToExport.length} 个语言 JSON 打包为一个 ZIP 文件。`,
+      description: `已由服务端生成 ${selectedExportLangs.value.length} 个语言的 JSON 压缩包。`,
     })
     closeExportModal()
-  } catch (error: any) {
+  }
+  catch (error: any) {
     console.error('Export JSON ZIP Error:', error)
     toast.error('导出失败', { description: error?.message || 'ZIP 文件生成失败，请重试。' })
-  } finally {
+  }
+  finally {
     isExportingJson.value = false
   }
 }
 
-function exportToExcel() {
-  const hasSelected = selectedCount.value > 0
-  const itemsToExport = hasSelected
-    ? selectedTermsForBulk.value
-    : filteredTerms.value
-
-  if (!itemsToExport || itemsToExport.length === 0) {
-    toast.warning('导出提醒', { description: '没有可以导出的词条。' })
+async function exportToExcel() {
+  if (isExportingExcel.value)
     return
-  }
-
-  const exportRows = itemsToExport.map((term) => {
-    const row: any = {
-      key: term.key || '',
-      Module: term.module || '',
-      Description: term.description || '',
-      Status: statusOptions.find(o => o.value === term.status)?.label || term.status,
-    }
-    // Add all language translations as columns
-    targetLanguages.value.forEach((lang) => {
-      row[lang.code] = term.translations[lang.code] || ''
-    })
-    return row
-  })
-
+  isExportingExcel.value = true
   try {
-    const ws = XLSX.utils.json_to_sheet(exportRows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Translations')
-    XLSX.writeFile(wb, `translations_export_${new Date().toISOString().slice(0, 10)}.xlsx`)
-    toast.success('导出成功', { description: `已导出 ${itemsToExport.length} 条数据到 Excel。` })
+    const result = await api.downloadPost({
+      url: `/projects/${projectId.value}/terms/export/excel`,
+      data: { scope: getDataScope() },
+    })
+    downloadBlob(result.blob, `translations_export_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    toast.success('导出成功', { description: 'Excel 文件已由服务端生成。' })
   }
-  catch (err) {
-    console.error('Export Excel Error:', err)
-    toast.error('导出失败')
+  catch (error: any) {
+    toast.error('导出失败', { description: error.message || 'Excel 文件生成失败。' })
+  }
+  finally {
+    isExportingExcel.value = false
   }
 }
-
 </script>
 
 <template>
@@ -2054,39 +2217,45 @@ function exportToExcel() {
       <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
           <div class="shrink-0">
-            <h1 class="text-2xl font-semibold tracking-tight text-foreground">词条工作台</h1>
-            <p class="mt-1 text-sm text-muted-foreground">管理当前项目的词条、译文与发布流程</p>
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+              词条工作台
+            </h1>
+            <p class="mt-1 text-sm text-muted-foreground">
+              管理当前项目的词条、译文与发布流程
+            </p>
           </div>
 
           <div class="hidden h-10 w-px bg-border sm:block" />
 
           <!-- Project Switcher -->
-        <UiDropdownMenu>
-          <UiDropdownMenuTrigger as-child>
-            <UiButton variant="outline" class="h-10 max-w-[300px] justify-start rounded-xl bg-background px-3">
-              <span class="mr-2 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                <FolderKanban class="size-3.5 text-primary" />
-              </span>
-              <span class="min-w-0 text-left">
-                <span class="block text-[10px] leading-none text-muted-foreground">当前项目</span>
-                <span class="mt-1 block truncate text-sm font-medium leading-none">{{ currentProject?.name || '加载中...' }}</span>
-              </span>
-              <ChevronDown class="ml-auto size-4 shrink-0 text-muted-foreground" />
-            </UiButton>
-          </UiDropdownMenuTrigger>
-          <UiDropdownMenuContent align="start" class="w-56">
-            <UiDropdownMenuLabel class="text-xs text-gray-400">切换当前工作项目</UiDropdownMenuLabel>
-            <UiDropdownMenuSeparator />
-            <UiDropdownMenuItem
-              v-for="p in projects" :key="p.id"
-              @click="router.push({ query: { ...route.query, project: p.id } })"
-              class="flex items-center justify-between"
-              :class="String(p.id) === projectId && 'bg-primary/10 text-primary font-medium'"
-            >
-              {{ p.name }}
-              <CheckCircle2 v-if="String(p.id) === projectId" class="w-3 h-3" />
-            </UiDropdownMenuItem>
-          </UiDropdownMenuContent>
+          <UiDropdownMenu>
+            <UiDropdownMenuTrigger as-child>
+              <UiButton variant="outline" class="h-10 max-w-[300px] justify-start rounded-xl bg-background px-3">
+                <span class="mr-2 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                  <FolderKanban class="size-3.5 text-primary" />
+                </span>
+                <span class="min-w-0 text-left">
+                  <span class="block text-[10px] leading-none text-muted-foreground">当前项目</span>
+                  <span class="mt-1 block truncate text-sm font-medium leading-none">{{ currentProject?.name || '加载中...' }}</span>
+                </span>
+                <ChevronDown class="ml-auto size-4 shrink-0 text-muted-foreground" />
+              </UiButton>
+            </UiDropdownMenuTrigger>
+            <UiDropdownMenuContent align="start" class="w-56">
+              <UiDropdownMenuLabel class="text-xs text-gray-400">
+                切换当前工作项目
+              </UiDropdownMenuLabel>
+              <UiDropdownMenuSeparator />
+              <UiDropdownMenuItem
+                v-for="p in projects" :key="p.id"
+                class="flex items-center justify-between"
+                :class="String(p.id) === projectId && 'bg-primary/10 text-primary font-medium'"
+                @click="router.push({ query: { ...route.query, project: p.id } })"
+              >
+                {{ p.name }}
+                <CheckCircle2 v-if="String(p.id) === projectId" class="w-3 h-3" />
+              </UiDropdownMenuItem>
+            </UiDropdownMenuContent>
           </UiDropdownMenu>
 
           <div class="flex min-w-0 items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs">
@@ -2097,164 +2266,171 @@ function exportToExcel() {
         </div>
 
         <div class="flex flex-wrap items-center gap-2 xl:justify-end">
-        <input
-          type="file"
-          ref="excelFileInput"
-          accept=".xlsx, .xls, .csv"
-          class="hidden"
-          @change="handleExcelImport"
-        />
-        <input
-          type="file"
-          ref="jsonFileInput"
-          accept=".json"
-          multiple
-          class="hidden"
-          @change="handleJsonImport"
-        />
-        <UiDropdownMenu>
-          <UiDropdownMenuTrigger as-child>
-            <UiButton
-              variant="outline"
-              class="w-[7.5rem] justify-center gap-2 rounded-xl"
-              :disabled="importingExcel"
-              :aria-label="importingExcel ? excelImportStage : '打开工作台工具箱'"
-            >
-              <Loader2 v-if="importingExcel" class="size-4 animate-spin" />
-              <Wrench v-else class="size-4" />
-              <span aria-live="polite">{{ importingExcel ? 'Excel 导入中' : '工具箱' }}</span>
-              <ChevronDown v-if="!importingExcel" class="size-3.5 opacity-50" />
-            </UiButton>
-          </UiDropdownMenuTrigger>
-          <UiDropdownMenuContent align="end" class="w-80 p-1.5">
-            <UiDropdownMenuLabel class="px-2 py-2">
-              <span class="block text-sm font-semibold text-foreground">工作台工具箱</span>
-              <span class="mt-0.5 block text-xs font-normal text-muted-foreground">集中处理批量录入、数据导出和项目维护</span>
-            </UiDropdownMenuLabel>
-            <UiDropdownMenuSeparator />
-            <template v-if="!isTranslator && !isProductor">
-              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">批量录入</UiDropdownMenuLabel>
-              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingJson || isGlobalEditing" @click="triggerJsonImport">
-                <Loader2 v-if="importingJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
-                <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span class="min-w-0">
-                  <span class="block text-sm font-medium">{{ importingJson ? '正在导入 JSON' : '导入多语言 JSON' }}</span>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">一次选择多个语言文件并合并词条</span>
-                </span>
-              </UiDropdownMenuItem>
-              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingObjectJson || isGlobalEditing" @click="openObjectImportModal">
-                <Loader2 v-if="importingObjectJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
-                <Copy v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span class="min-w-0">
-                  <span class="block text-sm font-medium">粘贴对象</span>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">粘贴代码对象并导入指定语言</span>
-                </span>
-              </UiDropdownMenuItem>
-              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing || importingExcel" @click="triggerExcelImport">
-                <Loader2 v-if="importingExcel" class="mt-0.5 size-4 shrink-0 animate-spin" />
-                <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span class="min-w-0">
-                  <span class="block text-sm font-medium">{{ importingExcel ? '正在导入 Excel' : '导入 Excel' }}</span>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">从表格批量创建词条和译文</span>
-                </span>
-              </UiDropdownMenuItem>
+          <input
+            ref="excelFileInput"
+            type="file"
+            accept=".xlsx, .xls, .csv"
+            class="hidden"
+            @change="handleExcelImport"
+          >
+          <input
+            ref="jsonFileInput"
+            type="file"
+            accept=".json"
+            multiple
+            class="hidden"
+            @change="handleJsonImport"
+          >
+          <UiDropdownMenu>
+            <UiDropdownMenuTrigger as-child>
+              <UiButton
+                variant="outline"
+                class="w-[7.5rem] justify-center gap-2 rounded-xl"
+                :disabled="importingExcel"
+                :aria-label="importingExcel ? excelImportStage : '打开工作台工具箱'"
+              >
+                <Loader2 v-if="importingExcel" class="size-4 animate-spin" />
+                <Wrench v-else class="size-4" />
+                <span aria-live="polite">{{ importingExcel ? 'Excel 导入中' : '工具箱' }}</span>
+                <ChevronDown v-if="!importingExcel" class="size-3.5 opacity-50" />
+              </UiButton>
+            </UiDropdownMenuTrigger>
+            <UiDropdownMenuContent align="end" class="w-80 p-1.5">
+              <UiDropdownMenuLabel class="px-2 py-2">
+                <span class="block text-sm font-semibold text-foreground">工作台工具箱</span>
+                <span class="mt-0.5 block text-xs font-normal text-muted-foreground">集中处理批量录入、数据导出和项目维护</span>
+              </UiDropdownMenuLabel>
               <UiDropdownMenuSeparator />
-              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">数据导出</UiDropdownMenuLabel>
-              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="openExportModal">
-                <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <template v-if="!isTranslator && !isProductor">
+                <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                  批量录入
+                </UiDropdownMenuLabel>
+                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingJson || isGlobalEditing" @click="triggerJsonImport">
+                  <Loader2 v-if="importingJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
+                  <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0">
+                    <span class="block text-sm font-medium">{{ importingJson ? '正在导入 JSON' : '导入多语言 JSON' }}</span>
+                    <span class="mt-0.5 block text-xs text-muted-foreground">一次选择多个语言文件并合并词条</span>
+                  </span>
+                </UiDropdownMenuItem>
+                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingObjectJson || isGlobalEditing" @click="openObjectImportModal">
+                  <Loader2 v-if="importingObjectJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
+                  <Copy v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0">
+                    <span class="block text-sm font-medium">粘贴对象</span>
+                    <span class="mt-0.5 block text-xs text-muted-foreground">粘贴代码对象并导入指定语言</span>
+                  </span>
+                </UiDropdownMenuItem>
+                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing || importingExcel" @click="triggerExcelImport">
+                  <Loader2 v-if="importingExcel" class="mt-0.5 size-4 shrink-0 animate-spin" />
+                  <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0">
+                    <span class="block text-sm font-medium">{{ importingExcel ? '正在导入 Excel' : '导入 Excel' }}</span>
+                    <span class="mt-0.5 block text-xs text-muted-foreground">从表格批量创建词条和译文</span>
+                  </span>
+                </UiDropdownMenuItem>
+                <UiDropdownMenuSeparator />
+                <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                  数据导出
+                </UiDropdownMenuLabel>
+                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="openExportModal">
+                  <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0">
+                    <span class="block text-sm font-medium">导出多语言 JSON</span>
+                    <span class="mt-0.5 block text-xs text-muted-foreground">按语言生成文件并打包为 ZIP</span>
+                  </span>
+                </UiDropdownMenuItem>
+                <UiDropdownMenuItem :disabled="isExportingExcel" class="items-start gap-3 px-2 py-2.5" @click="exportToExcel">
+                  <Loader2 v-if="isExportingExcel" class="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
+                  <Download v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0">
+                    <span class="block text-sm font-medium">导出为 Excel</span>
+                    <span class="mt-0.5 block text-xs text-muted-foreground">导出筛选结果或当前选中词条</span>
+                  </span>
+                </UiDropdownMenuItem>
+              </template>
+              <UiDropdownMenuSeparator v-if="!isTranslator && !isProductor" />
+              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                词条与项目
+              </UiDropdownMenuLabel>
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing" @click="openBatchAddDialog">
+                <ListPlus class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 <span class="min-w-0">
-                  <span class="block text-sm font-medium">导出多语言 JSON</span>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">按语言生成文件并打包为 ZIP</span>
+                  <span class="block text-sm font-medium">快捷批量创建</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">粘贴多行原文，预览后统一创建</span>
                 </span>
               </UiDropdownMenuItem>
-              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="exportToExcel">
-                <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <UiDropdownMenuItem
+                v-if="!isTranslator"
+                class="items-start gap-3 px-2 py-2.5"
+                @click="router.push({ path: '/project-logs', query: { project: projectId } })"
+              >
+                <Activity class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 <span class="min-w-0">
-                  <span class="block text-sm font-medium">导出为 Excel</span>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">导出筛选结果或当前选中词条</span>
+                  <span class="block text-sm font-medium">操作日志</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">查看项目内词条的变更记录</span>
                 </span>
               </UiDropdownMenuItem>
-            </template>
-            <UiDropdownMenuSeparator v-if="!isTranslator && !isProductor" />
-            <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">词条与项目</UiDropdownMenuLabel>
-            <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing" @click="openBatchAddDialog">
-              <ListPlus class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span class="min-w-0">
-                <span class="block text-sm font-medium">快捷批量创建</span>
-                <span class="mt-0.5 block text-xs text-muted-foreground">粘贴多行原文，预览后统一创建</span>
-              </span>
-            </UiDropdownMenuItem>
-            <UiDropdownMenuItem
-              v-if="!isTranslator"
-              class="items-start gap-3 px-2 py-2.5"
-              @click="router.push({ path: '/project-logs', query: { project: projectId } })"
+              <UiDropdownMenuItem v-if="isAdmin" class="items-start gap-3 px-2 py-2.5" @click="showSettingsModal = true">
+                <Wand2 class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">AI 提示词配置</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">调整当前项目的 AI 翻译规则</span>
+                </span>
+              </UiDropdownMenuItem>
+            </UiDropdownMenuContent>
+          </UiDropdownMenu>
+
+          <UiButton
+            v-if="!isGlobalEditing"
+            variant="secondary"
+            class="rounded-xl border-primary/20 text-primary hover:bg-primary/5"
+            @click="enterEditMode"
+          >
+            <Edit3 class="w-4 h-4 mr-2" />
+            进入编辑模式
+          </UiButton>
+
+          <div v-else class="flex gap-1 rounded-xl border border-primary/20 bg-primary/[0.07] p-1 animate-in fade-in duration-200">
+            <UiButton
+              variant="ghost"
+              size="sm"
+              class="text-muted-foreground hover:text-destructive"
+              @click="discardEditMode"
             >
-              <Activity class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span class="min-w-0">
-                <span class="block text-sm font-medium">操作日志</span>
-                <span class="mt-0.5 block text-xs text-muted-foreground">查看项目内词条的变更记录</span>
-              </span>
-            </UiDropdownMenuItem>
-            <UiDropdownMenuItem v-if="isAdmin" class="items-start gap-3 px-2 py-2.5" @click="showSettingsModal = true">
-              <Wand2 class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span class="min-w-0">
-                <span class="block text-sm font-medium">AI 提示词配置</span>
-                <span class="mt-0.5 block text-xs text-muted-foreground">调整当前项目的 AI 翻译规则</span>
-              </span>
-            </UiDropdownMenuItem>
-          </UiDropdownMenuContent>
-        </UiDropdownMenu>
+              <RotateCcw class="w-4 h-4 mr-2" />
+              放弃
+            </UiButton>
+            <UiButton
+              variant="default"
+              size="sm"
+              :disabled="isSavingBatch"
+              class="shadow-sm"
+              @click="saveEditMode"
+            >
+              <Loader2 v-if="isSavingBatch" class="w-4 h-4 mr-2 animate-spin" />
+              <Save v-else class="w-4 h-4 mr-2" />
+              保存全部
+            </UiButton>
+          </div>
 
-        <UiButton
-          v-if="!isGlobalEditing"
-          variant="secondary"
-          @click="enterEditMode"
-          class="rounded-xl border-primary/20 text-primary hover:bg-primary/5"
-        >
-          <Edit3 class="w-4 h-4 mr-2" />
-          进入编辑模式
-        </UiButton>
-
-        <div v-else class="flex gap-1 rounded-xl border border-primary/20 bg-primary/[0.07] p-1 animate-in fade-in duration-200">
           <UiButton
-            variant="ghost"
-            size="sm"
-            @click="discardEditMode"
-            class="text-muted-foreground hover:text-destructive"
-          >
-            <RotateCcw class="w-4 h-4 mr-2" />
-            放弃
-          </UiButton>
-          <UiButton
+            v-if="isAdmin || isDeveloper"
             variant="default"
-            size="sm"
-            @click="saveEditMode"
-            :disabled="isSavingBatch"
-            class="shadow-sm"
+            :disabled="isGlobalEditing"
+            class="rounded-xl"
+            @click="addNewTerm"
           >
-            <Loader2 v-if="isSavingBatch" class="w-4 h-4 mr-2 animate-spin" />
-            <Save v-else class="w-4 h-4 mr-2" />
-            保存全部
+            <Plus class="w-4 h-4 mr-2" />
+            新建词条
           </UiButton>
-        </div>
-
-        <UiButton
-          v-if="isAdmin || isDeveloper"
-          variant="default"
-          @click="addNewTerm"
-          :disabled="isGlobalEditing"
-          class="rounded-xl"
-        >
-          <Plus class="w-4 h-4 mr-2" />
-          新建词条
-        </UiButton>
         </div>
       </div>
 
       <div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 xl:max-w-2xl">
         <div class="flex items-center justify-between rounded-lg bg-muted/55 px-3 py-2">
           <span class="text-muted-foreground">词条总量</span>
-          <strong class="font-mono text-sm text-foreground">{{ visibleTerms.length }}</strong>
+          <strong class="font-mono text-sm text-foreground">{{ projectSummary.total }}</strong>
         </div>
         <div class="flex items-center justify-between rounded-lg bg-amber-500/8 px-3 py-2">
           <span class="text-amber-700 dark:text-amber-300">待补译</span>
@@ -2272,7 +2448,6 @@ function exportToExcel() {
           <strong class="font-mono text-sm text-emerald-700 dark:text-emerald-300">{{ publishedRate }}%</strong>
         </div>
       </div>
-
     </header>
 
     <!-- 顶栏过滤器和批量操作栏 -->
@@ -2321,7 +2496,9 @@ function exportToExcel() {
             <UiSelectValue placeholder="选择模块" />
           </UiSelectTrigger>
           <UiSelectContent>
-            <UiSelectItem value="all">所有模块</UiSelectItem>
+            <UiSelectItem value="all">
+              所有模块
+            </UiSelectItem>
             <UiSelectItem v-for="mod in modules" :key="mod" :value="mod === '' ? '__none__' : mod">
               {{ mod === '' ? '(无模块)' : mod }}
             </UiSelectItem>
@@ -2333,7 +2510,9 @@ function exportToExcel() {
             <UiSelectValue placeholder="选择状态" />
           </UiSelectTrigger>
           <UiSelectContent>
-            <UiSelectItem value="all">所有状态</UiSelectItem>
+            <UiSelectItem value="all">
+              所有状态
+            </UiSelectItem>
             <UiSelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
               {{ opt.label }}
             </UiSelectItem>
@@ -2378,14 +2557,15 @@ function exportToExcel() {
               {{ selectedCount }}
             </UiBadge>
             项已选中
+            <span v-if="selectedStatusSummary" class="ml-2 text-xs text-muted-foreground">{{ selectedStatusSummary }}</span>
           </section>
 
           <UiSeparator class="h-5 mx-1" orientation="vertical" />
 
           <div class="flex items-center gap-x-2 whitespace-nowrap">
             <!-- Split Batch Translate Button: Developer cannot self-translate -->
-            <div class="inline-flex items-center rounded-md shadow-sm" v-if="!isDeveloper">
-              <UiButton variant="default" size="sm" @click="batchTranslate()" :disabled="isBatchTranslating" class="rounded-r-none">
+            <div v-if="!isDeveloper" class="inline-flex items-center rounded-md shadow-sm">
+              <UiButton variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-r-none" @click="batchTranslate()">
                 <Loader2 v-if="isBatchTranslating" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
                 <Wand2 v-else class="w-3.5 h-3.5 mr-1.5" />
                 AI 批量翻译
@@ -2393,7 +2573,7 @@ function exportToExcel() {
               <UiTooltipProvider>
                 <UiTooltip>
                   <UiTooltipTrigger as-child>
-                    <UiButton variant="default" size="sm" @click="openBatchTranslateDialog" :disabled="isBatchTranslating" class="rounded-l-none border-l border-primary-foreground/20 px-1.5">
+                    <UiButton variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-l-none border-l border-primary-foreground/20 px-1.5" @click="openBatchTranslateDialog">
                       <ChevronDown class="w-3.5 h-3.5" />
                     </UiButton>
                   </UiTooltipTrigger>
@@ -2406,8 +2586,8 @@ function exportToExcel() {
               <UiButton
                 variant="outline"
                 size="sm"
-                @click="batchPersistStaged"
                 class="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
+                @click="batchPersistStaged"
               >
                 <CheckCircle2 class="w-3.5 h-3.5 mr-1.5" />
                 采纳 AI 建议 ({{ stagedSelectedIds.length }})
@@ -2415,8 +2595,8 @@ function exportToExcel() {
               <UiButton
                 variant="outline"
                 size="sm"
-                @click="batchDiscardStaged"
                 class="border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                @click="batchDiscardStaged"
               >
                 <RotateCcw class="w-3.5 h-3.5 mr-1.5" />
                 舍弃 AI 建议
@@ -2427,29 +2607,30 @@ function exportToExcel() {
             <UiButton
               variant="outline"
               size="sm"
-              @click="batchApproveReview"
-              :disabled="isBatchApprovingReview"
+              :disabled="isAnyBulkActionBusy || reviewableSelectedCount === 0"
               class="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              @click="batchApproveReview"
             >
-              <Loader2 v-if="isBatchApprovingReview" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              <Loader2 v-if="isBulkActionBusy('approve_review')" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
               <CheckCircle2 v-else class="w-3.5 h-3.5 mr-1.5" />
-              批量校对通过 {{ reviewableSelectedIds.length > 0 ? `(${reviewableSelectedIds.length})` : '' }}
+              批量校对通过 {{ reviewableSelectedCount > 0 ? `(${reviewableSelectedCount})` : '' }}
             </UiButton>
 
             <UiButton
               variant="outline"
               size="sm"
-              @click="triggerBatchPublish"
-              :disabled="isBatchPublishing"
+              :disabled="isAnyBulkActionBusy || publishableSelectedCount === 0"
               class="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950 disabled:opacity-50 disabled:cursor-not-allowed"
+              @click="triggerBatchPublish"
             >
-              <Loader2 v-if="isBatchPublishing" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              <Loader2 v-if="isBulkActionBusy('publish')" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
               <CheckCircle2 v-else class="w-3.5 h-3.5 mr-1.5" />
-              批量发布 {{ publishableSelectedIds.length > 0 ? `(${publishableSelectedIds.length})` : '' }}
+              批量发布 {{ publishableSelectedCount > 0 ? `(${publishableSelectedCount})` : '' }}
             </UiButton>
 
-            <UiButton variant="destructive" size="sm" @click="batchDelete">
-              <Trash2 class="w-3.5 h-3.5 mr-1.5" />
+            <UiButton variant="destructive" size="sm" :disabled="isAnyBulkActionBusy || deletableSelectedCount === 0" @click="batchDelete">
+              <Loader2 v-if="isBulkActionBusy('delete')" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              <Trash2 v-else class="w-3.5 h-3.5 mr-1.5" />
               批量删除
             </UiButton>
           </div>
@@ -2457,7 +2638,7 @@ function exportToExcel() {
         <div v-else class="flex min-h-[52px] flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
           <div class="flex items-center gap-2">
             <span class="size-1.5 rounded-full bg-primary/60" />
-            <span v-if="hasActiveFilters">筛选后显示 {{ filteredTerms.length }} / {{ visibleTerms.length }} 条词条</span>
+            <span v-if="hasActiveFilters">筛选后显示 {{ totalTerms }} / {{ projectSummary.total }} 条词条</span>
             <span v-else>勾选词条后可进行批量翻译、校对、发布或删除</span>
           </div>
           <UiButton v-if="hasActiveFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="clearAllFilters">
@@ -2472,8 +2653,20 @@ function exportToExcel() {
         class="flex flex-wrap items-center justify-center gap-2 border-t border-primary/15 bg-primary/[0.04] px-3 py-2 text-sm text-muted-foreground"
       >
         <span>已选择当前页 {{ paginatedTerms.length }} 条。</span>
-        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 text-primary" @click="selectAllFilteredTerms">
-          选择符合当前筛选条件的全部 {{ filteredTerms.length }} 条
+        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 !text-indigo-600 font-medium underline decoration-indigo-400/70 underline-offset-4 hover:!text-indigo-700 hover:decoration-indigo-600 dark:!text-indigo-400 dark:hover:!text-indigo-300" @click="selectAllFilteredTerms">
+          选择符合当前筛选条件的全部 {{ totalTerms }} 条
+        </UiButton>
+      </div>
+      <div
+        v-else-if="selectionMode === 'all_filtered'"
+        class="flex flex-wrap items-center justify-center gap-2 border-t border-primary/15 bg-primary/[0.04] px-3 py-2 text-sm text-muted-foreground"
+      >
+        <span>
+          已选择符合当前筛选条件的全部 {{ selectedCount }} 条
+          <template v-if="excludedTermIds.length > 0">（已排除 {{ excludedTermIds.length }} 条）</template>。
+        </span>
+        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 !text-indigo-600 font-medium underline decoration-indigo-400/70 underline-offset-4 hover:!text-indigo-700 hover:decoration-indigo-600 dark:!text-indigo-400 dark:hover:!text-indigo-300" @click="clearSelectedTerms">
+          取消跨页全选
         </UiButton>
       </div>
     </section>
@@ -2481,329 +2674,358 @@ function exportToExcel() {
     <!-- 词条表格 -->
     <section aria-label="词条列表" class="relative flex h-[clamp(620px,72svh,900px)] min-h-[620px] shrink-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
       <div class="min-h-0 flex-1 overflow-hidden">
-      <UiTable class="relative min-w-max">
-        <UiTableCaption class="sr-only">当前项目的多语言词条、流程状态与更新时间</UiTableCaption>
-        <UiTableHeader class="sticky top-0 z-20 bg-muted/95 backdrop-blur supports-backdrop-filter:bg-muted/80">
-          <UiTableRow class="hover:bg-transparent">
-            <UiTableHead class="w-10 px-3 text-center xl:sticky xl:left-0 xl:z-30 xl:bg-muted/95">
-              <UiCheckbox
-                :modelValue="checkboxAllState"
-                @update:modelValue="handleSelectAll"
-                aria-label="选择当前页全部词条"
-              />
-            </UiTableHead>
-            <UiTableHead class="w-24 text-center xl:sticky xl:left-10 xl:z-30 xl:bg-muted/95">操作</UiTableHead>
-            <UiTableHead class="min-w-[220px] border-r border-border/70 xl:sticky xl:left-[136px] xl:z-30 xl:bg-muted/95">词条标识与说明</UiTableHead>
-            <UiTableHead class="w-28 text-center">状态</UiTableHead>
-            <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[220px] py-2">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-foreground/80">{{ lang.name }}</span>
-                <span class="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{{ lang.code }}</span>
-                <span v-if="lang.code === sourceLanguageCode" class="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary">源</span>
-              </div>
-            </UiTableHead>
-            <UiTableHead class="w-36 text-muted-foreground">创建时间</UiTableHead>
-            <UiTableHead class="w-36 text-muted-foreground">更新时间</UiTableHead>
-          </UiTableRow>
-        </UiTableHeader>
-        <UiTableBody>
-          <UiTableRow
-            v-for="term in paginatedTerms"
-            :key="term.id"
-            class="group border-b border-border/70 transition-colors hover:bg-muted/35"
-            :class="{
-              'bg-primary/[0.03] dark:bg-primary/[0.05]': isTermSelected(term),
-              'bg-amber-50/30 dark:bg-amber-920/10 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id),
-              'bg-emerald-50/80 dark:bg-emerald-950/20': recentlyCreatedTermIds.includes(String(term.id))
-            }"
-          >
-            <!-- 多选列 -->
-            <UiTableCell class="w-10 bg-card px-3 py-3 text-center align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-0 xl:z-10">
-              <UiCheckbox
-                :modelValue="isTermSelected(term)"
-                @update:modelValue="toggleSelectTerm(term.id, $event)"
-                :aria-label="`选择词条 ${term.key || term.id}`"
-              />
-            </UiTableCell>
+        <UiTable class="relative min-w-max">
+          <UiTableCaption class="sr-only">
+            当前项目的多语言词条、流程状态与更新时间
+          </UiTableCaption>
+          <UiTableHeader class="sticky top-0 z-20 bg-muted/95 backdrop-blur supports-backdrop-filter:bg-muted/80">
+            <UiTableRow class="hover:bg-transparent">
+              <UiTableHead class="w-10 px-3 text-center xl:sticky xl:left-0 xl:z-30 xl:bg-muted/95">
+                <UiCheckbox
+                  :model-value="checkboxAllState"
+                  aria-label="选择当前页全部词条"
+                  @update:model-value="handleSelectAll"
+                />
+              </UiTableHead>
+              <UiTableHead class="w-24 text-center xl:sticky xl:left-10 xl:z-30 xl:bg-muted/95">
+                操作
+              </UiTableHead>
+              <UiTableHead class="min-w-[220px] border-r border-border/70 xl:sticky xl:left-[136px] xl:z-30 xl:bg-muted/95">
+                词条标识与说明
+              </UiTableHead>
+              <UiTableHead class="w-28 text-center">
+                状态
+              </UiTableHead>
+              <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[220px] py-2">
+                <div class="flex items-center gap-2">
+                  <span class="font-medium text-foreground/80">{{ lang.name }}</span>
+                  <span class="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{{ lang.code }}</span>
+                  <span v-if="lang.code === sourceLanguageCode" class="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary">源</span>
+                </div>
+              </UiTableHead>
+              <UiTableHead class="w-36 text-muted-foreground">
+                创建时间
+              </UiTableHead>
+              <UiTableHead class="w-36 text-muted-foreground">
+                更新时间
+              </UiTableHead>
+            </UiTableRow>
+          </UiTableHeader>
+          <UiTableBody>
+            <UiTableRow
+              v-for="term in paginatedTerms"
+              :key="term.id"
+              class="group border-b border-border/70 transition-colors hover:bg-muted/35"
+              :class="{
+                'bg-primary/[0.03] dark:bg-primary/[0.05]': isTermSelected(term),
+                'bg-amber-50/30 dark:bg-amber-920/10 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id),
+                'bg-emerald-50/80 dark:bg-emerald-950/20': recentlyCreatedTermIds.includes(String(term.id)),
+              }"
+            >
+              <!-- 多选列 -->
+              <UiTableCell class="w-10 bg-card px-3 py-3 text-center align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-0 xl:z-10">
+                <UiCheckbox
+                  :model-value="isTermSelected(term)"
+                  :aria-label="`选择词条 ${term.key || term.id}`"
+                  @update:model-value="toggleSelectTerm(term.id, $event)"
+                />
+              </UiTableCell>
 
-            <!-- 操作列 -->
-            <UiTableCell class="w-24 bg-card p-2 text-center align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-10 xl:z-10">
-              <UiTooltipProvider>
-                <div class="flex items-center justify-center gap-1.5 pt-1">
-                  <!-- Staged Actions (Wait for review) -->
-                  <template v-if="stagedChangeOriginals.has(term.id)">
-                    <UiTooltip>
-                      <UiTooltipTrigger as-child>
-                        <UiButton
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          @click="persistStagedRow(term)"
-                          class="size-8 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
-                          :aria-label="`接受并保存词条 ${term.key}`"
-                        >
-                          <CheckCircle2 class="w-3.5 h-3.5" />
-                        </UiButton>
-                      </UiTooltipTrigger>
-                      <UiTooltipContent side="top">接受并保存</UiTooltipContent>
-                    </UiTooltip>
+              <!-- 操作列 -->
+              <UiTableCell class="w-24 bg-card p-2 text-center align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-10 xl:z-10">
+                <UiTooltipProvider>
+                  <div class="flex items-center justify-center gap-1.5 pt-1">
+                    <!-- Staged Actions (Wait for review) -->
+                    <template v-if="stagedChangeOriginals.has(term.id)">
+                      <UiTooltip>
+                        <UiTooltipTrigger as-child>
+                          <UiButton
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            class="size-8 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
+                            :aria-label="`接受并保存词条 ${term.key}`"
+                            @click="persistStagedRow(term)"
+                          >
+                            <CheckCircle2 class="w-3.5 h-3.5" />
+                          </UiButton>
+                        </UiTooltipTrigger>
+                        <UiTooltipContent side="top">
+                          接受并保存
+                        </UiTooltipContent>
+                      </UiTooltip>
 
-                    <UiTooltip>
-                      <UiTooltipTrigger as-child>
-                        <UiButton
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          @click="discardStagedRow(term)"
-                          class="size-8 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                          :aria-label="`撤销词条 ${term.key} 的翻译`"
-                        >
-                          <RotateCcw class="w-3.5 h-3.5" />
-                        </UiButton>
-                      </UiTooltipTrigger>
-                      <UiTooltipContent side="top">撤销翻译</UiTooltipContent>
-                    </UiTooltip>
-                  </template>
+                      <UiTooltip>
+                        <UiTooltipTrigger as-child>
+                          <UiButton
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            class="size-8 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                            :aria-label="`撤销词条 ${term.key} 的翻译`"
+                            @click="discardStagedRow(term)"
+                          >
+                            <RotateCcw class="w-3.5 h-3.5" />
+                          </UiButton>
+                        </UiTooltipTrigger>
+                        <UiTooltipContent side="top">
+                          撤销翻译
+                        </UiTooltipContent>
+                      </UiTooltip>
+                    </template>
 
-                  <!-- Normal Actions -->
-                  <template v-else>
-                    <!-- Edit/Detail Button -->
-                    <UiTooltip>
-                      <UiTooltipTrigger as-child>
-                        <UiButton
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          @click="openDrawer(term)"
-                          class="size-8 text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                          :aria-label="`打开词条 ${term.key} 的详情`"
-                        >
-                          <Edit3 class="w-3.5 h-3.5" />
-                        </UiButton>
-                      </UiTooltipTrigger>
-                      <UiTooltipContent side="top">配置详情</UiTooltipContent>
-                    </UiTooltip>
+                    <!-- Normal Actions -->
+                    <template v-else>
+                      <!-- Edit/Detail Button -->
+                      <UiTooltip>
+                        <UiTooltipTrigger as-child>
+                          <UiButton
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            class="size-8 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                            :aria-label="`打开词条 ${term.key} 的详情`"
+                            @click="openDrawer(term)"
+                          >
+                            <Edit3 class="w-3.5 h-3.5" />
+                          </UiButton>
+                        </UiTooltipTrigger>
+                        <UiTooltipContent side="top">
+                          配置详情
+                        </UiTooltipContent>
+                      </UiTooltip>
 
-                    <!-- Translate Button: Developer cannot self-translate -->
-                    <UiTooltip v-if="term.status !== 'published' && !isDeveloper">
-                      <UiTooltipTrigger as-child>
-                        <UiButton
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          @click="translateRow(term)"
-                          :disabled="translatingTerms.has(term.id)"
-                          class="size-8 text-primary/70 hover:bg-primary/10 hover:text-primary disabled:opacity-30"
-                          :aria-label="translatingTerms.has(term.id) ? `正在翻译词条 ${term.key}` : `AI 翻译词条 ${term.key}`"
-                        >
-                          <Loader2 v-if="translatingTerms.has(term.id)" class="w-3.5 h-3.5 animate-spin" />
-                          <Wand2 v-else class="w-3.5 h-3.5" />
-                        </UiButton>
-                      </UiTooltipTrigger>
-                      <UiTooltipContent side="top">AI 翻译</UiTooltipContent>
-                    </UiTooltip>
-                    <UiTooltip v-else>
-                      <UiTooltipTrigger as-child>
+                      <!-- Translate Button: Developer cannot self-translate -->
+                      <UiTooltip v-if="term.status !== 'published' && !isDeveloper">
+                        <UiTooltipTrigger as-child>
+                          <UiButton
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            :disabled="translatingTerms.has(term.id)"
+                            class="size-8 text-primary/70 hover:bg-primary/10 hover:text-primary disabled:opacity-30"
+                            :aria-label="translatingTerms.has(term.id) ? `正在翻译词条 ${term.key}` : `AI 翻译词条 ${term.key}`"
+                            @click="translateRow(term)"
+                          >
+                            <Loader2 v-if="translatingTerms.has(term.id)" class="w-3.5 h-3.5 animate-spin" />
+                            <Wand2 v-else class="w-3.5 h-3.5" />
+                          </UiButton>
+                        </UiTooltipTrigger>
+                        <UiTooltipContent side="top">
+                          AI 翻译
+                        </UiTooltipContent>
+                      </UiTooltip>
+                      <UiTooltip v-else>
+                        <UiTooltipTrigger as-child>
                           <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/40" aria-label="当前不可使用 AI 翻译">
                             <Wand2 class="w-3.5 h-3.5" />
                           </UiButton>
-                      </UiTooltipTrigger>
-                      <UiTooltipContent side="top">请通过配置详情进行更新</UiTooltipContent>
-                    </UiTooltip>
+                        </UiTooltipTrigger>
+                        <UiTooltipContent side="top">
+                          请通过配置详情进行更新
+                        </UiTooltipContent>
+                      </UiTooltip>
 
-                    <UiAlertDialog v-if="term.status !== 'published' && !isTranslator && !isProductor" @update:open="val => presentDeletingId = val ? term.id : null">
-                      <UiTooltip :open="presentDeletingId === term.id ? false : undefined">
-                        <UiTooltipTrigger as-child v-if="isAdmin || isDeveloper">
-                          <UiAlertDialogTrigger as-child>
-                            <UiButton type="button" variant="ghost" size="icon" class="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" :aria-label="`删除词条 ${term.key}`">
+                      <UiAlertDialog v-if="term.status !== 'published' && !isTranslator && !isProductor" @update:open="val => presentDeletingId = val ? term.id : null">
+                        <UiTooltip :open="presentDeletingId === term.id ? false : undefined">
+                          <UiTooltipTrigger v-if="isAdmin || isDeveloper" as-child>
+                            <UiAlertDialogTrigger as-child>
+                              <UiButton type="button" variant="ghost" size="icon" class="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" :aria-label="`删除词条 ${term.key}`">
+                                <Trash2 class="w-3.5 h-3.5" />
+                              </UiButton>
+                            </UiAlertDialogTrigger>
+                          </UiTooltipTrigger>
+                          <UiTooltipTrigger v-else as-child>
+                            <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/30" aria-label="无权删除词条">
                               <Trash2 class="w-3.5 h-3.5" />
                             </UiButton>
-                          </UiAlertDialogTrigger>
-                        </UiTooltipTrigger>
-                        <UiTooltipTrigger as-child v-else>
-                          <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/30" aria-label="无权删除词条">
+                          </UiTooltipTrigger>
+                          <UiTooltipContent side="top">
+                            {{ (isAdmin || isDeveloper) ? '删除词条' : '无权删除' }}
+                          </UiTooltipContent>
+                        </UiTooltip>
+
+                        <UiAlertDialogContent @close-auto-focus="(e) => e.preventDefault()">
+                          <UiAlertDialogHeader>
+                            <UiAlertDialogTitle>确认删除该词条吗？</UiAlertDialogTitle>
+                            <UiAlertDialogDescription>
+                              您正在尝试删除词条 <strong class="text-foreground font-mono">{{ term.key }}</strong>。此操作无法撤销。
+                            </UiAlertDialogDescription>
+                          </UiAlertDialogHeader>
+                          <UiAlertDialogFooter>
+                            <UiAlertDialogCancel>取消</UiAlertDialogCancel>
+                            <UiAlertDialogAction class="bg-destructive text-white hover:bg-destructive/90" @click="deleteTerm(term.id)">
+                              确认删除
+                            </UiAlertDialogAction>
+                          </UiAlertDialogFooter>
+                        </UiAlertDialogContent>
+                      </UiAlertDialog>
+                      <UiTooltip v-else>
+                        <UiTooltipTrigger as-child>
+                          <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/30" aria-label="当前不可删除词条">
                             <Trash2 class="w-3.5 h-3.5" />
                           </UiButton>
                         </UiTooltipTrigger>
-                        <UiTooltipContent side="top">{{ (isAdmin || isDeveloper) ? '删除词条' : '无权删除' }}</UiTooltipContent>
+                        <UiTooltipContent side="top">
+                          {{ term.status === 'published' ? '不可删除线上已发布项' : '无权限操作' }}
+                        </UiTooltipContent>
                       </UiTooltip>
+                    </template>
+                  </div>
+                </UiTooltipProvider>
+              </UiTableCell>
 
-                      <UiAlertDialogContent @close-auto-focus="(e) => e.preventDefault()">
-                        <UiAlertDialogHeader>
-                          <UiAlertDialogTitle>确认删除该词条吗？</UiAlertDialogTitle>
-                          <UiAlertDialogDescription>
-                            您正在尝试删除词条 <strong class="text-foreground font-mono">{{ term.key }}</strong>。此操作无法撤销。
-                          </UiAlertDialogDescription>
-                        </UiAlertDialogHeader>
-                        <UiAlertDialogFooter>
-                          <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-                          <UiAlertDialogAction class="bg-destructive text-white hover:bg-destructive/90" @click="deleteTerm(term.id)">
-                            确认删除
-                          </UiAlertDialogAction>
-                        </UiAlertDialogFooter>
-                      </UiAlertDialogContent>
-                    </UiAlertDialog>
-                    <UiTooltip v-else>
-                      <UiTooltipTrigger as-child>
-                        <UiButton type="button" variant="ghost" size="icon" disabled class="size-8 text-muted-foreground/30" aria-label="当前不可删除词条">
-                          <Trash2 class="w-3.5 h-3.5" />
-                        </UiButton>
-                      </UiTooltipTrigger>
-                      <UiTooltipContent side="top">{{ term.status === 'published' ? '不可删除线上已发布项' : '无权限操作' }}</UiTooltipContent>
-                    </UiTooltip>
-                  </template>
-                </div>
-              </UiTooltipProvider>
-            </UiTableCell>
+              <!-- 词条基础信息列 (Optimized Layout) -->
+              <UiTableCell class="min-w-[220px] border-r border-border/70 bg-card p-3 align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-[136px] xl:z-10" :class="{ 'bg-primary/[0.06]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
+                <div class="flex flex-col gap-1 min-w-0">
+                  <!-- Row 1: Module & Key & Sidebar Toggle -->
+                  <div class="flex items-center gap-1.5 min-w-0 h-6">
+                    <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
+                      <div class="flex items-center gap-1 flex-1 min-w-0">
+                        <UiInput
+                          v-model="term.module"
+                          :disabled="isTranslator || isProductor"
+                          class="h-6 w-16 text-[10px] font-mono text-primary bg-background border-primary/20 shrink-0 px-1"
+                          placeholder="模块"
+                        />
+                        <UiInput
+                          v-model="term.key"
+                          :disabled="isTranslator || isProductor"
+                          class="h-6 flex-1 text-xs font-bold border-b border-t-0 border-l-0 border-r-0 border-primary/30 focus-visible:ring-0 px-1 py-0 shadow-none rounded-none placeholder:text-red-400 bg-transparent"
+                          placeholder="Key不可为空"
+                          @update:model-value="handleKeyUpdate(term)"
+                        />
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span v-if="term.module" class="shrink-0 rounded-md border border-primary/10 bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-medium text-primary">
+                          {{ term.module }}
+                        </span>
+                        <span
+                          class="flex-1 truncate font-mono text-[13px] font-semibold text-foreground"
+                          :title="term.key"
+                        >
+                          {{ term.key || 'Untitled_Key' }}
+                        </span>
+                      </div>
+                    </template>
+                  </div>
 
-            <!-- 词条基础信息列 (Optimized Layout) -->
-            <UiTableCell class="min-w-[220px] border-r border-border/70 bg-card p-3 align-top transition-colors group-hover:bg-muted/35 xl:sticky xl:left-[136px] xl:z-10" :class="{ 'bg-primary/[0.06]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
-              <div class="flex flex-col gap-1 min-w-0">
-                <!-- Row 1: Module & Key & Sidebar Toggle -->
-                <div class="flex items-center gap-1.5 min-w-0 h-6">
-                  <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
-                    <div class="flex items-center gap-1 flex-1 min-w-0">
+                  <!-- Row 2: Subtle Description -->
+                  <div class="min-w-0 h-5">
+                    <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
                       <UiInput
-                        v-model="term.module"
-                        :disabled="isTranslator || isProductor"
-                        class="h-6 w-16 text-[10px] font-mono text-primary bg-background border-primary/20 shrink-0 px-1"
-                        placeholder="模块"
+                        v-model="term.description"
+                        class="h-5 text-[10px] w-full px-1 border-gray-100 dark:border-zinc-800 bg-background/50 focus:bg-background"
+                        placeholder="添加描述..."
                       />
-                      <UiInput
-                        v-model="term.key"
-                        :disabled="isTranslator || isProductor"
-                        @update:model-value="handleKeyUpdate(term)"
-                        class="h-6 flex-1 text-xs font-bold border-b border-t-0 border-l-0 border-r-0 border-primary/30 focus-visible:ring-0 px-1 py-0 shadow-none rounded-none placeholder:text-red-400 bg-transparent"
-                        placeholder="Key不可为空"
-                      />
-                    </div>
-                  </template>
-                  <template v-else>
-                    <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                      <span v-if="term.module" class="shrink-0 rounded-md border border-primary/10 bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-medium text-primary">
-                        {{ term.module }}
-                      </span>
-                      <span
-                        class="flex-1 truncate font-mono text-[13px] font-semibold text-foreground"
-                        :title="term.key"
-                      >
-                        {{ term.key || 'Untitled_Key' }}
-                      </span>
-                    </div>
-                  </template>
+                    </template>
+                    <template v-else-if="term.description">
+                      <p class="line-clamp-1 truncate px-0.5 text-[11px] leading-tight text-muted-foreground" :title="term.description">
+                        {{ term.description }}
+                      </p>
+                    </template>
+                  </div>
                 </div>
+              </UiTableCell>
 
-                <!-- Row 2: Subtle Description -->
-                <div class="min-w-0 h-5">
-                  <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
-                    <UiInput
-                      v-model="term.description"
-                      class="h-5 text-[10px] w-full px-1 border-gray-100 dark:border-zinc-800 bg-background/50 focus:bg-background"
-                      placeholder="添加描述..."
-                    />
-                  </template>
-                  <template v-else-if="term.description">
-                    <p class="line-clamp-1 truncate px-0.5 text-[11px] leading-tight text-muted-foreground" :title="term.description">
-                      {{ term.description }}
-                    </p>
-                  </template>
-                </div>
-              </div>
-            </UiTableCell>
-
-            <!-- 状态列 -->
-            <UiTableCell class="align-top p-3 text-center w-32" :class="{ 'bg-primary/[0.02]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
-              <div class="flex justify-center pt-1">
-                <div
-                  class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors"
-                  :class="[
-                    term.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200' :
-                    term.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                    term.status === 'review' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
-                    'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  ]"
-                >
-                  <span class="size-1.5 rounded-full" :class="getStatusColor(term.status)" />
-                  {{ statusOptions.find(o => o.value === term.status)?.label }}
-                </div>
-              </div>
-            </UiTableCell>
-
-            <!-- 多语言翻译列 -->
-            <UiTableCell v-for="lang in targetLanguages" :key="lang.code" class="align-top p-2 group/cell" :class="{ 'bg-primary/[0.01]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
-              <div class="min-h-[44px] relative">
-                <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
-                  <UiTextarea
-                    v-model="term.translations[lang.code]"
-                    :disabled="isDeveloper"
-                    @update:model-value="handleTranslationUpdate(term)"
-                    class="w-full min-h-[44px] p-1.5 text-xs shadow-none bg-background border-primary/20 focus-visible:ring-1 focus-visible:ring-primary/20 resize-none transition-all leading-relaxed"
-                    :class="hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
-                    :placeholder="'输入 ' + lang.name + '...'"
-                  />
-                </template>
-                <template v-else>
+              <!-- 状态列 -->
+              <UiTableCell class="align-top p-3 text-center w-32" :class="{ 'bg-primary/[0.02]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
+                <div class="flex justify-center pt-1">
                   <div
-                    class="w-full min-h-[44px] p-1.5 text-xs break-words whitespace-pre-wrap rounded border border-transparent transition-colors group-hover/cell:bg-gray-50/80"
+                    class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors"
                     :class="[
-                      !term.translations[lang.code] ? 'text-muted-foreground/55' : 'text-foreground/80',
-                      hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive/40 bg-destructive/5 text-destructive dark:text-destructive' : ''
+                      term.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200'
+                      : term.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : term.status === 'review' ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200',
                     ]"
                   >
-                    {{ term.translations[lang.code] || '尚未填写' }}
+                    <span class="size-1.5 rounded-full" :class="getStatusColor(term.status)" />
+                    {{ statusOptions.find(o => o.value === term.status)?.label }}
                   </div>
-                </template>
-                <p v-if="hasTranslationPlaceholderMismatch(term, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
-                  <span v-if="getTranslationPlaceholderDiff(term, lang.code).missing.length">
-                    缺少 {{ getTranslationPlaceholderDiff(term, lang.code).missing.join(', ') }}
-                  </span>
-                  <span v-if="getTranslationPlaceholderDiff(term, lang.code).extra.length">
-                    {{ getTranslationPlaceholderDiff(term, lang.code).missing.length ? '，' : '' }}多出 {{ getTranslationPlaceholderDiff(term, lang.code).extra.join(', ') }}
-                  </span>
-                </p>
-              </div>
-            </UiTableCell>
-
-            <!-- 创建时间 & 更新时间 -->
-            <UiTableCell class="align-top p-3 w-36 text-xs text-muted-foreground whitespace-nowrap">
-              {{ term.created_at ? new Date(term.created_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—' }}
-            </UiTableCell>
-            <UiTableCell class="align-top p-3 w-36 text-xs text-muted-foreground whitespace-nowrap">
-              {{ term.updated_at ? new Date(term.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—' }}
-            </UiTableCell>
-
-          </UiTableRow>
-
-          <!-- Empty State Row -->
-          <UiTableRow v-if="filteredTerms.length === 0 && !loadingTerms">
-            <UiTableCell :colspan="targetLanguages.length + 6" class="h-[400px] text-center p-0 border-none hover:bg-transparent">
-              <div class="flex flex-col items-center justify-center gap-4 text-muted-foreground">
-                <div class="flex size-14 items-center justify-center rounded-2xl border border-dashed bg-muted/40">
-                  <Search class="size-6 opacity-40" />
                 </div>
-                <div class="space-y-1">
-                  <p class="text-sm font-medium text-foreground">{{ terms.length === 0 ? '当前项目还没有词条' : '没有匹配的词条' }}</p>
-                  <p class="text-xs opacity-70">{{ terms.length === 0 ? '创建第一条词条，开始建立多语言内容。' : '调整关键词、模块或状态筛选后再试。' }}</p>
+              </UiTableCell>
+
+              <!-- 多语言翻译列 -->
+              <UiTableCell v-for="lang in targetLanguages" :key="lang.code" class="align-top p-2 group/cell" :class="{ 'bg-primary/[0.01]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
+                <div class="min-h-[44px] relative">
+                  <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
+                    <UiTextarea
+                      v-model="term.translations[lang.code]"
+                      :disabled="isDeveloper"
+                      class="w-full min-h-[44px] p-1.5 text-xs shadow-none bg-background border-primary/20 focus-visible:ring-1 focus-visible:ring-primary/20 resize-none transition-all leading-relaxed"
+                      :class="hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
+                      :placeholder="`输入 ${lang.name}...`"
+                      @update:model-value="handleTranslationUpdate(term)"
+                    />
+                  </template>
+                  <template v-else>
+                    <div
+                      class="w-full min-h-[44px] p-1.5 text-xs break-words whitespace-pre-wrap rounded border border-transparent transition-colors group-hover/cell:bg-gray-50/80"
+                      :class="[
+                        !term.translations[lang.code] ? 'text-muted-foreground/55' : 'text-foreground/80',
+                        hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive/40 bg-destructive/5 text-destructive dark:text-destructive' : '',
+                      ]"
+                    >
+                      {{ term.translations[lang.code] || '尚未填写' }}
+                    </div>
+                  </template>
+                  <p v-if="hasTranslationPlaceholderMismatch(term, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
+                    <span v-if="getTranslationPlaceholderDiff(term, lang.code).missing.length">
+                      缺少 {{ getTranslationPlaceholderDiff(term, lang.code).missing.join(', ') }}
+                    </span>
+                    <span v-if="getTranslationPlaceholderDiff(term, lang.code).extra.length">
+                      {{ getTranslationPlaceholderDiff(term, lang.code).missing.length ? '，' : '' }}多出 {{ getTranslationPlaceholderDiff(term, lang.code).extra.join(', ') }}
+                    </span>
+                  </p>
                 </div>
-                <UiButton v-if="terms.length === 0 && (isAdmin || isDeveloper)" variant="outline" size="sm" class="mt-2" @click="showAddTermModal = true">
-                  <Plus class="size-3.5 mr-1.5" />
-                  新建词条
-                </UiButton>
-                <UiButton v-else-if="hasActiveFilters" variant="outline" size="sm" class="mt-2" @click="clearAllFilters">
-                  <X class="mr-1.5 size-3.5" />
-                  清除全部筛选
-                </UiButton>
-              </div>
-            </UiTableCell>
-          </UiTableRow>
-        </UiTableBody>
-      </UiTable>
+              </UiTableCell>
+
+              <!-- 创建时间 & 更新时间 -->
+              <UiTableCell class="align-top p-3 w-36 text-xs text-muted-foreground whitespace-nowrap">
+                {{ term.created_at ? new Date(term.created_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—' }}
+              </UiTableCell>
+              <UiTableCell class="align-top p-3 w-36 text-xs text-muted-foreground whitespace-nowrap">
+                {{ term.updated_at ? new Date(term.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—' }}
+              </UiTableCell>
+            </UiTableRow>
+
+            <!-- Empty State Row -->
+            <UiTableRow v-if="totalTerms === 0 && !loadingTerms">
+              <UiTableCell :colspan="targetLanguages.length + 6" class="h-[400px] text-center p-0 border-none hover:bg-transparent">
+                <div class="flex flex-col items-center justify-center gap-4 text-muted-foreground">
+                  <div class="flex size-14 items-center justify-center rounded-2xl border border-dashed bg-muted/40">
+                    <Search class="size-6 opacity-40" />
+                  </div>
+                  <div class="space-y-1">
+                    <p class="text-sm font-medium text-foreground">
+                      {{ projectSummary.total === 0 ? '当前项目还没有词条' : '没有匹配的词条' }}
+                    </p>
+                    <p class="text-xs opacity-70">
+                      {{ projectSummary.total === 0 ? '创建第一条词条，开始建立多语言内容。' : '调整关键词、模块或状态筛选后再试。' }}
+                    </p>
+                  </div>
+                  <UiButton v-if="projectSummary.total === 0 && (isAdmin || isDeveloper)" variant="outline" size="sm" class="mt-2" @click="showAddTermModal = true">
+                    <Plus class="size-3.5 mr-1.5" />
+                    新建词条
+                  </UiButton>
+                  <UiButton v-else-if="hasActiveFilters" variant="outline" size="sm" class="mt-2" @click="clearAllFilters">
+                    <X class="mr-1.5 size-3.5" />
+                    清除全部筛选
+                  </UiButton>
+                </div>
+              </UiTableCell>
+            </UiTableRow>
+          </UiTableBody>
+        </UiTable>
       </div>
 
       <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-4 py-3 text-sm">
         <div class="text-xs text-muted-foreground">
-          共 {{ filteredTerms.length }} 条
-          <template v-if="filteredTerms.length > 0">
+          共 {{ totalTerms }} 条
+          <template v-if="totalTerms > 0">
             ，当前 {{ pageStart }}-{{ pageEnd }} 条
           </template>
           <template v-if="selectedCount > 0">
@@ -2851,10 +3073,11 @@ function exportToExcel() {
       <div v-if="loadingTerms" class="absolute inset-0 top-[40px] z-20 flex items-center justify-center bg-card/75 backdrop-blur-[1px]" role="status" aria-live="polite">
         <div class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-card p-6 text-muted-foreground shadow-lg">
           <Loader2 class="size-8 animate-spin text-primary" />
-          <p class="text-sm font-medium">正在加载词条数据...</p>
+          <p class="text-sm font-medium">
+            正在加载词条数据...
+          </p>
         </div>
       </div>
-
     </section>
 
     <!-- 快捷批量创建模态框 -->
@@ -2877,7 +3100,9 @@ function exportToExcel() {
         <div v-if="batchAddStep === 'input'" class="min-h-0 space-y-4 overflow-y-auto py-4">
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="space-y-2">
-              <UiLabel for="batch-source-language">原文语言</UiLabel>
+              <UiLabel for="batch-source-language">
+                原文语言
+              </UiLabel>
               <UiSelect v-model="batchSourceLangCode">
                 <UiSelectTrigger id="batch-source-language">
                   <UiSelectValue placeholder="选择原文语言" />
@@ -2890,13 +3115,17 @@ function exportToExcel() {
               </UiSelect>
             </div>
             <div class="space-y-2">
-              <UiLabel for="batch-default-module">默认模块（可选）</UiLabel>
+              <UiLabel for="batch-default-module">
+                默认模块（可选）
+              </UiLabel>
               <UiInput id="batch-default-module" v-model="batchDefaultModule" maxlength="100" placeholder="例如：common、auth" />
             </div>
           </div>
 
           <div class="space-y-2">
-            <UiLabel for="batch-create-content">粘贴清单，一行一条</UiLabel>
+            <UiLabel for="batch-create-content">
+              粘贴清单，一行一条
+            </UiLabel>
             <UiTextarea
               id="batch-create-content"
               v-model="batchAddText"
@@ -2922,18 +3151,34 @@ function exportToExcel() {
             <UiTable>
               <UiTableHeader class="sticky top-0 z-10 bg-muted/95 backdrop-blur">
                 <UiTableRow>
-                  <UiTableHead class="w-12 text-center">#</UiTableHead>
-                  <UiTableHead class="min-w-[220px]">Key</UiTableHead>
-                  <UiTableHead class="min-w-[150px]">模块</UiTableHead>
-                  <UiTableHead class="min-w-[260px]">{{ targetLanguages.find(lang => lang.code === batchSourceLangCode)?.name || '原文' }}</UiTableHead>
-                  <UiTableHead class="min-w-[200px]">描述（可选）</UiTableHead>
-                  <UiTableHead class="min-w-[200px]">检查结果</UiTableHead>
-                  <UiTableHead class="w-16"><span class="sr-only">操作</span></UiTableHead>
+                  <UiTableHead class="w-12 text-center">
+                    #
+                  </UiTableHead>
+                  <UiTableHead class="min-w-[220px]">
+                    Key
+                  </UiTableHead>
+                  <UiTableHead class="min-w-[150px]">
+                    模块
+                  </UiTableHead>
+                  <UiTableHead class="min-w-[260px]">
+                    {{ targetLanguages.find(lang => lang.code === batchSourceLangCode)?.name || '原文' }}
+                  </UiTableHead>
+                  <UiTableHead class="min-w-[200px]">
+                    描述（可选）
+                  </UiTableHead>
+                  <UiTableHead class="min-w-[200px]">
+                    检查结果
+                  </UiTableHead>
+                  <UiTableHead class="w-16">
+                    <span class="sr-only">操作</span>
+                  </UiTableHead>
                 </UiTableRow>
               </UiTableHeader>
               <UiTableBody>
                 <UiTableRow v-for="(row, index) in batchCreateRows" :key="row.clientId">
-                  <UiTableCell class="text-center text-xs text-muted-foreground">{{ index + 1 }}</UiTableCell>
+                  <UiTableCell class="text-center text-xs text-muted-foreground">
+                    {{ index + 1 }}
+                  </UiTableCell>
                   <UiTableCell>
                     <UiInput
                       v-model="row.key"
@@ -2996,11 +3241,17 @@ function exportToExcel() {
 
         <UiDialogFooter class="shrink-0">
           <template v-if="batchAddStep === 'input'">
-            <UiButton variant="outline" :disabled="isBatchCreatingTerms" @click="handleBatchAddOpenChange(false)">取消</UiButton>
-            <UiButton :disabled="!batchAddText.trim() || !batchSourceLangCode" @click="confirmBatchAdd">下一步：预览</UiButton>
+            <UiButton variant="outline" :disabled="isBatchCreatingTerms" @click="handleBatchAddOpenChange(false)">
+              取消
+            </UiButton>
+            <UiButton :disabled="!batchAddText.trim() || !batchSourceLangCode" @click="confirmBatchAdd">
+              下一步：预览
+            </UiButton>
           </template>
           <template v-else>
-            <UiButton variant="outline" :disabled="isBatchCreatingTerms" @click="batchAddStep = 'input'">返回修改</UiButton>
+            <UiButton variant="outline" :disabled="isBatchCreatingTerms" @click="batchAddStep = 'input'">
+              返回修改
+            </UiButton>
             <UiButton
               :disabled="isBatchCreatingTerms || batchCreateRows.length === 0 || batchRowErrors.size > 0"
               @click="submitBatchCreate"
@@ -3014,7 +3265,7 @@ function exportToExcel() {
     </UiDialog>
 
     <!-- 侧边栏详情抽屉 (Drawer) -->
-    <UiSheet :open="isDrawerOpen" @update:open="val => { if(!val) closeDrawer() }">
+    <UiSheet :open="isDrawerOpen" @update:open="val => { if (!val) closeDrawer() }">
       <UiSheetContent class="w-[500px] sm:max-w-[500px] p-0 flex flex-col border-l dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
         <div v-if="activeDrawerTerm" class="flex flex-col h-full overflow-hidden">
           <!-- Drawer Header -->
@@ -3030,118 +3281,127 @@ function exportToExcel() {
                 <span class="text-gray-400 font-bold shrink-0">.</span>
                 <UiInput
                   v-model="activeDrawerTerm.key"
-                  @update:model-value="handleKeyUpdate(activeDrawerTerm)"
                   class="h-8 flex-1 text-sm font-bold bg-transparent border-transparent hover:border-gray-200 focus-visible:ring-1 focus-visible:border-gray-200 px-1 disabled:opacity-100 disabled:bg-transparent disabled:border-transparent disabled:cursor-not-allowed"
                   placeholder="Key (必填)"
                   :disabled="isDrawerTermPublished || isTranslator || isProductor"
+                  @update:model-value="handleKeyUpdate(activeDrawerTerm)"
                 />
               </UiSheetTitle>
               <div
                 class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium shadow-sm shrink-0"
                 :class="[
-                  activeDrawerTerm?.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200' :
-                  activeDrawerTerm?.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                  activeDrawerTerm?.status === 'review' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
-                  'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  activeDrawerTerm?.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200'
+                  : activeDrawerTerm?.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : activeDrawerTerm?.status === 'review' ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200',
                 ]"
               >
-                <span class="w-1.5 h-1.5 rounded-full" :class="getStatusColor(activeDrawerTerm?.status || '')"></span>
+                <span class="w-1.5 h-1.5 rounded-full" :class="getStatusColor(activeDrawerTerm?.status || '')" />
                 {{ statusOptions.find(o => o.value === activeDrawerTerm?.status)?.label || activeDrawerTerm?.status }}
               </div>
             </div>
-            <UiSheetDescription class="hidden">详情</UiSheetDescription>
+            <UiSheetDescription class="hidden">
+              详情
+            </UiSheetDescription>
           </UiSheetHeader>
 
           <div class="flex-1 min-h-0">
             <UiScrollArea class="h-full w-full block">
               <div class="p-6 space-y-8">
+                <!-- Section: Context & Description -->
+                <div class="space-y-4">
+                  <div class="space-y-2">
+                    <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                      上下文描述
+                    </h3>
+                    <UiTextarea
+                      v-model="activeDrawerTerm.description"
+                      class="min-h-[80px] text-sm leading-relaxed"
+                      placeholder="添加详细的上下文描述，如出现位置、用途等..."
+                    />
+                  </div>
+                </div>
 
-          <!-- Section: Context & Description -->
-          <div class="space-y-4">
-            <div class="space-y-2">
-              <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">上下文描述</h3>
-              <UiTextarea
-                v-model="activeDrawerTerm.description"
-                class="min-h-[80px] text-sm leading-relaxed"
-                placeholder="添加详细的上下文描述，如出现位置、用途等..."
-              />
-            </div>
-          </div>
+                <hr class="border-gray-100 dark:border-zinc-800">
 
-          <hr class="border-gray-100 dark:border-zinc-800" />
-
-          <!-- Section: All Translations form -->
-          <div class="space-y-4">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                多语言翻译
-                <span class="text-xs font-normal text-gray-500">{{ targetLanguages.length }} 个语种</span>
-              </div>
-              <UiButton v-if="!isDeveloper" variant="outline" size="sm" class="h-7 text-xs px-2 cursor-pointer border-primary/20 hover:border-primary/50 text-primary/80" :disabled="translatingDrawer" @click="translateDrawerTerm">
-                <Loader2 v-if="translatingDrawer" class="w-3 h-3 mr-1.5 animate-spin" />
-                <Wand2 v-else class="w-3 h-3 mr-1.5" />
-                AI 翻译当前
-              </UiButton>
-            </h3>
-            <div class="grid grid-cols-1 gap-4">
-              <div v-for="lang in targetLanguages" :key="lang.code" class="group">
-                <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 flex justify-between">
-                  <span>{{ lang.name }} <span class="uppercase text-gray-400 translate-y-px inline-block ml-1">({{ lang.code }})</span></span>
-                </label>
-                <UiTextarea
-                  v-model="activeDrawerTerm.translations[lang.code]"
-                  :disabled="isDeveloper"
-                  @update:model-value="handleTranslationUpdate(activeDrawerTerm)"
-                  class="min-h-[44px]"
-                  :class="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
-                  :placeholder="'输入 ' + lang.name + ' 翻译...'"
-                />
-                <p v-if="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
-                  <span v-if="getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.length">
-                    缺少 {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.join(', ') }}
-                  </span>
-                  <span v-if="getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).extra.length">
-                    {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.length ? '，' : '' }}多出 {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).extra.join(', ') }}
-                  </span>
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <hr class="border-gray-100 dark:border-zinc-800" />
-
-          <!-- Section: Meta / History -->
-          <div class="space-y-4 pb-4">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">元数据与日志</h3>
-            <div class="bg-gray-50 dark:bg-zinc-950 p-4 rounded-lg space-y-3 text-sm">
-              <div class="flex items-center text-gray-500 dark:text-gray-400">
-                <CalendarDays class="w-4 h-4 mr-2" />
-                <span class="w-20">最后更新:</span>
-                <span class="text-gray-900 dark:text-gray-100">{{ activeDrawerTerm.updatedAt || 'N/A' }}</span>
-              </div>
-
-              <div v-if="activeDrawerTerm.history && activeDrawerTerm.history.length > 0" class="mt-4 border-t border-gray-200 dark:border-zinc-800 pt-3">
-                <p class="text-xs text-gray-500 mb-2">最近动态</p>
-                <ul class="space-y-3 relative before:absolute before:inset-y-0 before:left-[5px] before:w-[2px] before:bg-gray-200 dark:before:bg-zinc-800">
-                  <li v-for="(log, idx) in activeDrawerTerm.history" :key="idx" class="relative pl-5">
-                    <span class="absolute left-0 top-1.5 w-3 h-3 bg-white dark:bg-zinc-950 border-[2px] border-primary rounded-full z-10"></span>
-                    <div class="flex flex-col text-xs space-y-0.5">
-                      <span class="text-gray-900 dark:text-gray-100 font-medium">{{ log.user }} <span class="text-gray-500 font-normal ml-1">{{ log.action }}</span></span>
-                      <span class="text-gray-400">{{ log.time }}</span>
+                <!-- Section: All Translations form -->
+                <div class="space-y-4">
+                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      多语言翻译
+                      <span class="text-xs font-normal text-gray-500">{{ targetLanguages.length }} 个语种</span>
                     </div>
-                  </li>
-                </ul>
+                    <UiButton v-if="!isDeveloper" variant="outline" size="sm" class="h-7 text-xs px-2 cursor-pointer border-primary/20 hover:border-primary/50 text-primary/80" :disabled="translatingDrawer" @click="translateDrawerTerm">
+                      <Loader2 v-if="translatingDrawer" class="w-3 h-3 mr-1.5 animate-spin" />
+                      <Wand2 v-else class="w-3 h-3 mr-1.5" />
+                      AI 翻译当前
+                    </UiButton>
+                  </h3>
+                  <div class="grid grid-cols-1 gap-4">
+                    <div v-for="lang in targetLanguages" :key="lang.code" class="group">
+                      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 flex justify-between">
+                        <span>{{ lang.name }} <span class="uppercase text-gray-400 translate-y-px inline-block ml-1">({{ lang.code }})</span></span>
+                      </label>
+                      <UiTextarea
+                        v-model="activeDrawerTerm.translations[lang.code]"
+                        :disabled="isDeveloper"
+                        class="min-h-[44px]"
+                        :class="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
+                        :placeholder="`输入 ${lang.name} 翻译...`"
+                        @update:model-value="handleTranslationUpdate(activeDrawerTerm)"
+                      />
+                      <p v-if="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
+                        <span v-if="getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.length">
+                          缺少 {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.join(', ') }}
+                        </span>
+                        <span v-if="getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).extra.length">
+                          {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.length ? '，' : '' }}多出 {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).extra.join(', ') }}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <hr class="border-gray-100 dark:border-zinc-800">
+
+                <!-- Section: Meta / History -->
+                <div class="space-y-4 pb-4">
+                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    元数据与日志
+                  </h3>
+                  <div class="bg-gray-50 dark:bg-zinc-950 p-4 rounded-lg space-y-3 text-sm">
+                    <div class="flex items-center text-gray-500 dark:text-gray-400">
+                      <CalendarDays class="w-4 h-4 mr-2" />
+                      <span class="w-20">最后更新:</span>
+                      <span class="text-gray-900 dark:text-gray-100">{{ activeDrawerTerm.updatedAt || 'N/A' }}</span>
+                    </div>
+
+                    <div v-if="activeDrawerTerm.history && activeDrawerTerm.history.length > 0" class="mt-4 border-t border-gray-200 dark:border-zinc-800 pt-3">
+                      <p class="text-xs text-gray-500 mb-2">
+                        最近动态
+                      </p>
+                      <ul class="space-y-3 relative before:absolute before:inset-y-0 before:left-[5px] before:w-[2px] before:bg-gray-200 dark:before:bg-zinc-800">
+                        <li v-for="(log, idx) in activeDrawerTerm.history" :key="idx" class="relative pl-5">
+                          <span class="absolute left-0 top-1.5 w-3 h-3 bg-white dark:bg-zinc-950 border-[2px] border-primary rounded-full z-10" />
+                          <div class="flex flex-col text-xs space-y-0.5">
+                            <span class="text-gray-900 dark:text-gray-100 font-medium">{{ log.user }} <span class="text-gray-500 font-normal ml-1">{{ log.action }}</span></span>
+                            <span class="text-gray-400">{{ log.time }}</span>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-            </div>
             </UiScrollArea>
           </div>
 
           <!-- Drawer Footer -->
           <UiSheetFooter class="p-6 border-t border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-950/50">
             <div class="flex justify-between items-center w-full gap-3">
-              <UiButton variant="outline" @click="closeDrawer" class="flex-1">取消</UiButton>
+              <UiButton variant="outline" class="flex-1" @click="closeDrawer">
+                取消
+              </UiButton>
               <div class="flex gap-2 flex-1">
                 <UiButton
                   v-if="canApproveReviewInDrawer"
@@ -3181,16 +3441,71 @@ function exportToExcel() {
       </UiSheetContent>
     </UiSheet>
 
-    <!-- AlertDialogs for Safety -->
-    <UiAlertDialog :open="showBatchPublishConfirmModal" @update:open="val => showBatchPublishConfirmModal = val">
+    <!-- 服务端预检查后的统一批量操作确认 -->
+    <UiAlertDialog :open="showBulkConfirmDialog" @update:open="handleBulkDialogOpen">
       <UiAlertDialogContent>
         <UiAlertDialogHeader>
-          <UiAlertDialogTitle>确认批量发布？</UiAlertDialogTitle>
-          <UiAlertDialogDescription>您即将发布选中的词条，线上内容将被更新，请确认无误。</UiAlertDialogDescription>
+          <UiAlertDialogTitle>{{ activeBulkMeta?.title }}</UiAlertDialogTitle>
+          <UiAlertDialogDescription>{{ activeBulkMeta?.description }}</UiAlertDialogDescription>
         </UiAlertDialogHeader>
+
+        <div v-if="bulkPreview" class="space-y-3 py-1">
+          <div class="grid grid-cols-3 gap-2" aria-label="批量操作预检查结果">
+            <div class="rounded-lg border bg-muted/40 px-3 py-2">
+              <p class="text-[11px] text-muted-foreground">
+                选中范围
+              </p>
+              <p class="mt-0.5 font-mono text-lg font-semibold">
+                {{ bulkPreview.matched }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2">
+              <p class="text-[11px] text-muted-foreground">
+                本次执行
+              </p>
+              <p class="mt-0.5 font-mono text-lg font-semibold text-primary">
+                {{ bulkPreview.executable }}
+              </p>
+            </div>
+            <div class="rounded-lg border bg-muted/40 px-3 py-2">
+              <p class="text-[11px] text-muted-foreground">
+                自动跳过
+              </p>
+              <p class="mt-0.5 font-mono text-lg font-semibold">
+                {{ bulkPreview.skipped }}
+              </p>
+            </div>
+          </div>
+
+          <div v-if="bulkPreview.skipped > 0" class="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5 text-sm">
+            <p class="font-medium text-foreground">
+              跳过原因
+            </p>
+            <ul class="mt-1.5 space-y-1 text-muted-foreground">
+              <li v-for="(count, reason) in bulkPreview.skip_reasons" :key="reason" class="flex justify-between gap-4">
+                <span>{{ bulkSkipReasonLabels[reason] || reason }}</span>
+                <span class="font-mono text-foreground">{{ count }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="bulkActionError" role="alert" class="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+            {{ bulkActionError }}
+          </div>
+        </div>
+
         <UiAlertDialogFooter>
-          <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction class="bg-indigo-600 hover:bg-indigo-700 text-white" @click="confirmBatchPublish">确认发布</UiAlertDialogAction>
+          <UiAlertDialogCancel :disabled="isBulkExecuting">
+            取消
+          </UiAlertDialogCancel>
+          <UiButton
+            :variant="pendingBulkOperation === 'delete' ? 'destructive' : 'default'"
+            :disabled="isBulkExecuting || !bulkPreview?.executable"
+            @click="confirmBulkAction"
+          >
+            <Loader2 v-if="isBulkExecuting" class="mr-2 size-4 animate-spin" />
+            {{ activeBulkMeta?.verb }} {{ bulkPreview?.executable || 0 }} 条
+          </UiButton>
         </UiAlertDialogFooter>
       </UiAlertDialogContent>
     </UiAlertDialog>
@@ -3203,7 +3518,9 @@ function exportToExcel() {
         </UiAlertDialogHeader>
         <UiAlertDialogFooter>
           <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction class="bg-primary text-primary-foreground hover:bg-primary/90" @click="confirmDrawerSave">确认覆盖</UiAlertDialogAction>
+          <UiAlertDialogAction class="bg-primary text-primary-foreground hover:bg-primary/90" @click="confirmDrawerSave">
+            确认覆盖
+          </UiAlertDialogAction>
         </UiAlertDialogFooter>
       </UiAlertDialogContent>
     </UiAlertDialog>
@@ -3216,7 +3533,9 @@ function exportToExcel() {
         </UiAlertDialogHeader>
         <UiAlertDialogFooter>
           <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction class="bg-indigo-600 hover:bg-indigo-700 text-white" @click="confirmDrawerPublish">确认发布</UiAlertDialogAction>
+          <UiAlertDialogAction class="bg-indigo-600 hover:bg-indigo-700 text-white" @click="confirmDrawerPublish">
+            确认发布
+          </UiAlertDialogAction>
         </UiAlertDialogFooter>
       </UiAlertDialogContent>
     </UiAlertDialog>
@@ -3270,7 +3589,9 @@ function exportToExcel() {
         </div>
 
         <UiDialogFooter>
-          <UiButton variant="outline" @click="showObjectImportModal = false">取消</UiButton>
+          <UiButton variant="outline" @click="showObjectImportModal = false">
+            取消
+          </UiButton>
           <UiButton :disabled="importingObjectJson || !objectImportText.trim() || !objectImportLangCode" @click="submitObjectImport">
             <Loader2 v-if="importingObjectJson" class="w-4 h-4 mr-2 animate-spin" />
             确认导入
@@ -3291,11 +3612,17 @@ function exportToExcel() {
 
         <div class="py-4 space-y-4">
           <div class="flex items-center justify-between">
-            <h4 class="text-sm font-medium">选择目标语种</h4>
+            <h4 class="text-sm font-medium">
+              选择目标语种
+            </h4>
             <div class="flex items-center gap-2">
-              <button @click="selectAllExportLangs" class="text-[10px] text-primary hover:underline">全选</button>
+              <button class="text-[10px] text-primary hover:underline" @click="selectAllExportLangs">
+                全选
+              </button>
               <span class="text-[10px] text-muted-foreground opacity-30">|</span>
-              <button @click="deselectAllExportLangs" class="text-[10px] text-muted-foreground hover:underline">清空</button>
+              <button class="text-[10px] text-muted-foreground hover:underline" @click="deselectAllExportLangs">
+                清空
+              </button>
             </div>
           </div>
           <UiScrollArea class="h-[300px] border rounded-md p-2 bg-gray-50/50 dark:bg-zinc-900/50">
@@ -3303,9 +3630,9 @@ function exportToExcel() {
               <div
                 v-for="lang in targetLanguages"
                 :key="lang.code"
-                @click="toggleExportLang(lang.code)"
                 class="flex items-center gap-3 p-2 rounded-md hover:bg-white dark:hover:bg-zinc-800 cursor-pointer transition-colors border border-transparent hover:border-border"
                 :class="selectedExportLangs.includes(lang.code) ? 'bg-white dark:bg-zinc-800 border-border shadow-sm' : ''"
+                @click="toggleExportLang(lang.code)"
               >
                 <UiCheckbox
                   :model-value="selectedExportLangs.includes(lang.code)"
@@ -3319,10 +3646,13 @@ function exportToExcel() {
                   <UiTooltip>
                     <UiTooltipTrigger as-child>
                       <button
-                        @click.stop="copyLangJson(lang.code, lang.name)"
+                        :disabled="Boolean(copyingLanguageCode)"
+                        :aria-label="`复制${lang.name} JSON`"
                         class="p-1.5 ml-auto text-muted-foreground hover:bg-background hover:text-foreground rounded transition border border-transparent hover:border-border shadow-sm shadow-transparent hover:shadow-sm"
+                        @click.stop="copyLangJson(lang.code, lang.name)"
                       >
-                        <Copy class="w-4 h-4" />
+                        <Loader2 v-if="copyingLanguageCode === lang.code" class="w-4 h-4 animate-spin" />
+                        <Copy v-else class="w-4 h-4" />
                       </button>
                     </UiTooltipTrigger>
                     <UiTooltipContent>直接复制 JSON</UiTooltipContent>
@@ -3334,7 +3664,9 @@ function exportToExcel() {
         </div>
 
         <UiDialogFooter>
-          <UiButton variant="outline" :disabled="isExportingJson" @click="closeExportModal">取消</UiButton>
+          <UiButton variant="outline" :disabled="isExportingJson" @click="closeExportModal">
+            取消
+          </UiButton>
           <UiButton
             class="bg-green-600 text-white hover:bg-green-700"
             :disabled="isExportingJson || selectedExportLangs.length === 0"
@@ -3363,7 +3695,7 @@ function exportToExcel() {
           <div class="space-y-2">
             <UiLabel class="text-sm font-bold flex justify-between items-center">
               全局默认提示词 (Default Prompt)
-              <UiButton variant="ghost" size="sm" @click="globalPrompt = '翻译以下内容，这是一个智能体APP的内容并将其翻译为本地化语言。\n待翻译原文参考：\n描述和上下文: {description}\n现有参考翻译 (若有可参考，若无请根据键名和描述推断):\n{translations}'" class="h-6 text-[10px] text-muted-foreground hover:text-primary">
+              <UiButton variant="ghost" size="sm" class="h-6 text-[10px] text-muted-foreground hover:text-primary" @click="globalPrompt = '翻译以下内容，这是一个智能体APP的内容并将其翻译为本地化语言。\n待翻译原文参考：\n描述和上下文: {description}\n现有参考翻译 (若有可参考，若无请根据键名和描述推断):\n{translations}'">
                 恢复默认
               </UiButton>
             </UiLabel>
@@ -3376,7 +3708,9 @@ function exportToExcel() {
 
           <div class="grid grid-cols-2 gap-4">
             <div class="p-3 bg-gray-50 dark:bg-zinc-900 rounded-lg border border-gray-100 dark:border-zinc-800">
-              <p class="text-xs font-bold text-gray-500 mb-2 uppercase">可用变量</p>
+              <p class="text-xs font-bold text-gray-500 mb-2 uppercase">
+                可用变量
+              </p>
               <div class="space-y-1.5">
                 <div class="flex justify-between items-center group">
                   <code class="text-[11px] text-primary bg-primary/5 px-1 rounded">{description}</code>
@@ -3400,7 +3734,9 @@ function exportToExcel() {
         </div>
 
         <UiDialogFooter>
-          <UiButton variant="outline" @click="showSettingsModal = false">取消</UiButton>
+          <UiButton variant="outline" @click="showSettingsModal = false">
+            取消
+          </UiButton>
           <UiButton :disabled="isSavingPrompt" @click="saveGlobalPrompt">
             <Loader2 v-if="isSavingPrompt" class="mr-2 h-4 w-4 animate-spin" />
             保存全局配置
@@ -3431,36 +3767,26 @@ function exportToExcel() {
             placeholder="输入或修改提示词..."
           />
           <p class="text-[11px] text-muted-foreground">
-            此次修改仅对本次翻译有效，不会修改全局设置。<template v-if="isAdmin">如需永久修改，请到工具栏的
-            <button @click="cancelTranslateDialog(); showSettingsModal = true" class="text-primary hover:underline">提示词设置</button>中编辑。</template>
+            此次修改仅对本次翻译有效，不会修改全局设置。<template v-if="isAdmin">
+              如需永久修改，请到工具栏的
+              <button class="text-primary hover:underline" @click="cancelTranslateDialog(); showSettingsModal = true">
+                提示词设置
+              </button>中编辑。
+            </template>
           </p>
         </div>
 
         <UiDialogFooter>
-          <UiButton variant="outline" @click="cancelTranslateDialog">取消</UiButton>
-          <UiButton @click="confirmTranslate" :disabled="!tempPrompt.trim()">
+          <UiButton variant="outline" @click="cancelTranslateDialog">
+            取消
+          </UiButton>
+          <UiButton :disabled="!tempPrompt.trim()" @click="confirmTranslate">
             <Wand2 class="w-3.5 h-3.5 mr-1.5" />
             开始翻译
           </UiButton>
         </UiDialogFooter>
       </UiDialogContent>
     </UiDialog>
-
-    <!-- 批量删除确认模态框 -->
-    <UiAlertDialog :open="showBatchDeleteDialog" @update:open="val => showBatchDeleteDialog = val">
-      <UiAlertDialogContent>
-        <UiAlertDialogHeader>
-          <UiAlertDialogTitle>确认批量删除？</UiAlertDialogTitle>
-          <UiAlertDialogDescription>
-            您即将删除选中的 <strong class="text-foreground">{{ selectedCount }}</strong> 个词条。此操作不可恢复，是否继续？
-          </UiAlertDialogDescription>
-        </UiAlertDialogHeader>
-        <UiAlertDialogFooter>
-          <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction class="bg-destructive text-destructive-foreground hover:bg-destructive/90" @click="confirmBatchDelete">确认删除</UiAlertDialogAction>
-        </UiAlertDialogFooter>
-      </UiAlertDialogContent>
-    </UiAlertDialog>
 
     <!-- 新建词条模态框 -->
     <UiDialog v-model:open="showAddTermModal">
@@ -3486,7 +3812,9 @@ function exportToExcel() {
           </div>
         </div>
         <UiDialogFooter>
-          <UiButton variant="outline" @click="showAddTermModal = false">取消</UiButton>
+          <UiButton variant="outline" @click="showAddTermModal = false">
+            取消
+          </UiButton>
           <UiButton :disabled="submittingTerm" @click="submitNewTerm">
             <Loader2 v-if="submittingTerm" class="size-4 mr-2 animate-spin" />
             新建
@@ -3494,6 +3822,5 @@ function exportToExcel() {
         </UiDialogFooter>
       </UiDialogContent>
     </UiDialog>
-
   </div>
 </template>
