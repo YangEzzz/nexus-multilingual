@@ -37,7 +37,86 @@ Helios 项目详情的“统一登录接入”管理客户端、精确回调地�
 
 ## 部署
 
-使用独立 HTTPS 域名，两端前端通过各自域名反向代理 `/api` 到后端；设置准确的 `FRONTEND_URL`、`HELIOS_BASE_URL`、`HELIOS_INTERNAL_URL` 和已登记的 `HELIOS_REDIRECT_URI`，启用 `COOKIE_SECURE=true`。`HELIOS_BASE_URL` 是浏览器可访问的 Helios 地址，`HELIOS_INTERNAL_URL` 是 Nexus 后端访问 Helios 的地址，跨机器时使用 HTTPS。
+生产环境沿用现有域名规则：页面域名提供静态页面，所有浏览器 API 请求、授权入口和后端回调都使用各自的 API 子域名。页面域名不增加 `/api` 代理。
+
+| 用途 | 地址 |
+| --- | --- |
+| Helios 页面 | https://helios.team-tool.top |
+| Helios API 与授权入口 | https://helios-api.team-tool.top |
+| Nexus 页面与登录完成页 | https://nexus.team-tool.top |
+| Nexus API 与后端回调 | https://nexus-api.team-tool.top |
+
+前端构建时使用下面的地址。Helios 配置不带 `/api` 后缀；Nexus 配置带 `/api/v1`。Axios 和登录请求共用同一配置。
+
+```bash
+# /root/frontendProject/helios-auth-admin
+VITE_APP_API_BASE_URL=https://helios-api.team-tool.top pnpm exec vite build
+
+# /root/frontendProject/nexus-multilingual
+VITE_APP_API_BASE_URL=https://nexus-api.team-tool.top/api/v1 pnpm build
+```
+
+Helios 后端保留现有数据库和 JWT 配置，设置：
+
+```dotenv
+FRONTEND_URL=https://helios.team-tool.top
+COOKIE_SECURE=true
+DB_AUTO_MIGRATE=false
+```
+
+Nexus 后端保留现有数据库等配置，设置：
+
+```dotenv
+FRONTEND_URL=https://nexus.team-tool.top
+ALLOWED_ORIGINS=https://nexus.team-tool.top
+COOKIE_SECURE=true
+AUTO_MIGRATE=false
+HELIOS_BASE_URL=https://helios-api.team-tool.top
+HELIOS_INTERNAL_URL=http://127.0.0.1:3456
+HELIOS_CLIENT_ID=nexus-multilingual-production
+HELIOS_CLIENT_SECRET=replace-with-the-once-displayed-secret
+HELIOS_REDIRECT_URI=https://nexus-api.team-tool.top/api/v1/auth/sso/callback
+HELIOS_PROJECT_ID=nexus-multilingual
+HELIOS_ALLOWED_ROLES=admin,owner,productor,developer,translator
+```
+
+`HELIOS_BASE_URL` 是浏览器可访问的 Helios **API** 地址；`HELIOS_INTERNAL_URL` 是 Nexus 后端访问 Helios 的地址，同机使用 loopback，跨机器时使用 HTTPS。Helios 客户端登记的回调地址必须与上面的 `HELIOS_REDIRECT_URI` 完全一致。授权 API 重定向到 Helios 页面域名显示表单；回调在 Nexus API 域名兑换授权码、建立 Cookie，再重定向到 Nexus 页面域名通知原窗口。两个 API 与页面都使用 HTTPS，并位于同一个 `team-tool.top` 站点下；Cookie 保持 host-only、HttpOnly 和 SameSite=Lax，不共享给其他子域名。
+
+### 现有 Nginx 的跨域响应
+
+标准 JSON 写请求携带 `X-CSRF-Token`，浏览器通过 OPTIONS 预检后携带 Cookie。前端保持 `credentials: include` / `withCredentials: true`，后端校验精确 Origin 和 CSRF Cookie/header。没有 text/plain 或请求体 CSRF 变体。
+
+只调整已有的两个 API 虚拟主机，证书、域名、监听端口和前端静态目录保持原样。在 `helios-api.team-tool.top` 的 server 中，用下面的内容替换原来的整个 `location /api/`：
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:3456;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+在 `nexus-api.team-tool.top` 的 server 中，用下面的内容替换原来的整个 `location /`：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3457;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+替换会移除这两个 location 原来手写的 OPTIONS 返回、`proxy_hide_header Access-Control-*` 和 `add_header Access-Control-*`。Nginx 将预检和业务请求转发给后端，由后端统一返回精确的允许来源、`Access-Control-Allow-Credentials: true` 和包含 `X-CSRF-Token` 的允许请求头；避免 Nginx 与后端重复或互相覆盖。不要给携带 Cookie 的接口设置 `Access-Control-Allow-Origin: *`。
+
+配置检查成功后重载：
+
+```bash
+nginx -t && systemctl reload nginx
+```
 
 反向代理和访问日志应去掉授权回调的查询字符串。Nexus 可使用 `Cross-Origin-Opener-Policy: same-origin-allow-popups`；不要用 `same-origin` 隔离登录弹窗。Helios 登录页不设置会切断 opener 的 COOP。后端状态轮询仍是最终依据。Helios 默认仅信任 loopback 代理来源；远端网关部署应通过 `TRUSTED_PROXIES` 配置实际网关 IP/CIDR（逗号分隔），并在网关增加多实例登录限流。
 
@@ -54,3 +133,5 @@ Helios 项目详情的“统一登录接入”管理客户端、精确回调地�
 全项目 premium strict 静态审计保存在各自 `.local`：Nexus 8 项、Helios 10 项既有模板问题，涉及演示任务表单、原生下拉所有权、主题弹出触发按钮等；新增 SSO 页面没有审计发现。这些结果不表示全项目审计通过。
 
 浏览器验证截图仅保存在本地，未包含在代码发布中。
+
+2026-10-10 API 子域名调整验证：两端后端 `go test ./...` 通过；新增 CORS 测试覆盖独立 API 来源的 GET、POST、OPTIONS、允许 Cookie/CSRF 请求头及拒绝其他来源。两个前端使用正式 API 子域名构建通过，修改文件 ESLint 为 0 错误。本地浏览器将两个前端分别直连不同端口的后端 API，已验证已有会话刷新、跨域退出、发起授权、复用 Helios 会话和返回 Nexus 仪表盘。生产服务器的 Nginx 与正式客户端配置仍需按本文部署后验证。

@@ -10,7 +10,7 @@ import qs from 'qs'
 import { ResultEnum } from '@/request/types.ts'
 import router from '@/router/index'
 import { useAuthStore } from '@/store/auth'
-import { clearLegacyAuth, getCSRFToken } from '@/utils/session'
+import { apiBaseURL, clearLegacyAuth, getCSRFToken } from '@/utils/session'
 // import router from '@/router'
 
 // 定义响应数据类型
@@ -28,7 +28,7 @@ export interface DownloadData {
 // 创建 axios 实例
 const request = axios.create({
   // API 请求的默认前缀
-  baseURL: import.meta.env.VITE_APP_API_BASE_URL,
+  baseURL: apiBaseURL,
   timeout: 600000, // 请求超时时间
   adapter: 'fetch',
   withCredentials: true,

@@ -1,4 +1,4 @@
-const baseURL = (import.meta.env.VITE_APP_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+export const apiBaseURL = (import.meta.env.VITE_APP_API_BASE_URL || (import.meta.env.PROD ? 'https://nexus-api.team-tool.top/api/v1' : '/api/v1')).replace(/\/$/, '')
 let csrfToken = ''
 let csrfRequest: Promise<string> | null = null
 
@@ -8,7 +8,7 @@ export function clearLegacyAuth() {
 }
 
 export async function authRequest<T>(path: string, data?: unknown): Promise<T> {
-  const response = await fetch(`${baseURL}/auth${path}`, {
+  const response = await fetch(`${apiBaseURL}/auth${path}`, {
     method: data === undefined ? 'GET' : 'POST',
     credentials: 'include',
     headers: data === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRF-Token': await getCSRFToken() },
