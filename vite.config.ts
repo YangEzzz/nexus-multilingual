@@ -53,4 +53,9 @@ export default defineConfig(({ command }) => ({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    port: 5173,
+    strictPort: true,
+    proxy: { '/api': { target: process.env.NEXUS_API_TARGET || 'http://127.0.0.1:3457', changeOrigin: true } },
+  },
 }))

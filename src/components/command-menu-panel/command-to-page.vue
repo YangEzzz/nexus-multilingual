@@ -3,6 +3,7 @@ import type { NavGroup, NavItem } from '../app-sidebar/types'
 
 import { CommandGroup, CommandItem } from '@/components/ui/command'
 
+import { usePermission } from '@/composables/use-permission'
 import { useSidebar } from '@/composables/use-sidebar'
 import CommandItemHasIcon from './command-item-has-icon.vue'
 
@@ -27,7 +28,9 @@ function getFlatNavItems(navData: NavGroup[]): NavItem[] {
   return flatItems
 }
 
-const commands = getFlatNavItems([...navData.value!, ...otherPages.value!])
+const { canVisit } = usePermission()
+const commands = computed(() => getFlatNavItems([...navData.value!, ...otherPages.value!])
+  .filter(item => item.url && canVisit(item.url)))
 
 const router = useRouter()
 const route = useRoute()

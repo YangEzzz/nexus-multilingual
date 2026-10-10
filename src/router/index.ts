@@ -1,6 +1,9 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
-import { isLoggedIn } from '@/utils/auth'
+import { useAuth } from '@/composables/use-auth'
+import { usePermission } from '@/composables/use-permission'
+import { ROUTE_PERMISSIONS } from '@/lib/permissions'
+import { useAuthStore } from '@/store/auth'
 
 // 定义公共路由（不需要登录即可访问）
 // const publicRoutes = ['/login', '/register', '/404']
@@ -59,6 +62,11 @@ const baseRoutes: RouteRecordRaw[] = [
   {
     path: '/auth',
     children: [
+      {
+        path: 'sso/complete',
+        name: 'sso-complete',
+        component: () => import('@/views/Auth/SSOComplete.vue'),
+      },
       {
         path: 'sign-in',
         name: 'sign-in',
@@ -131,21 +139,39 @@ const router = createRouter({
 
 // 全局前置守卫
 router.beforeEach(async (to, _, next) => {
+  if (to.path === '/auth/sso/complete') {
+    next()
+    return
+  }
+  const authStore = useAuthStore()
+  if (!authStore.initialized)
+    await useAuth().getUserInfo()
   // 检查当前路径是否在公共路由中 (或者是 auth 或者 errors 目录下的均放行)
   const isPublicRoute = publicRoutes.includes(to.path) || to.path.startsWith('/auth/') || to.path.startsWith('/errors/')
 
-  if (!isPublicRoute && !isLoggedIn()) {
+  if (!isPublicRoute && !authStore.isLogin) {
     // 还没登录且不属于公共路由，强制跳回登录
     next({
       path: '/auth/sign-in',
       query: { redirect: to.fullPath }, // 保存原目标路径，以便登录后重定向
     })
   }
-  else if (to.path.startsWith('/auth/') && isLoggedIn()) {
+  else if (to.path.startsWith('/auth/') && authStore.isLogin) {
     // 已经登录的情况下，又跑回登录页/认证页的话，重定向到首页
     next({ path: '/' })
   }
   else {
+    const required = ROUTE_PERMISSIONS[to.path]
+    if (required) {
+      const { can, role } = usePermission()
+      if (!role.value) {
+        await useAuth().getUserInfo()
+      }
+      if (!can(required)) {
+        next({ path: '/errors/403' })
+        return
+      }
+    }
     // 正常放行
     next()
   }

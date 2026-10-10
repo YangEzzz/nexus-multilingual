@@ -2,9 +2,11 @@
 import { CircleAlert, Eye, EyeOff, KeyRound, Loader2, Server, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
+import { usePermission } from '@/composables/use-permission'
 import { api } from '@/request'
 
 defineOptions({ name: 'AiSettings' })
+const { can } = usePermission()
 
 interface AISettings {
   configured: boolean
@@ -32,6 +34,8 @@ function errorMessage(error: unknown, fallback: string) {
 }
 
 async function loadSettings() {
+  if (!can('ai.settings'))
+    return
   loading.value = true
   try {
     const response = await api.get<AISettings>({ url: '/ai/settings' })
@@ -47,6 +51,8 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
+  if (!can('ai.settings'))
+    return
   formError.value = ''
   if (!model.value.trim()) {
     formError.value = '请输入模型名称。'
@@ -78,6 +84,8 @@ async function saveSettings() {
 }
 
 async function deleteSettings() {
+  if (!can('ai.settings'))
+    return
   deleting.value = true
   try {
     await api.post({ url: '/ai/settings/delete' })
@@ -98,7 +106,7 @@ onMounted(loadSettings)
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-4xl px-4 py-7 sm:px-6 lg:px-8">
+  <main v-permission="'ai.settings'" class="mx-auto w-full max-w-4xl px-4 py-7 sm:px-6 lg:px-8">
     <div class="mb-7 space-y-2">
       <div class="flex flex-wrap items-center gap-3">
         <h1 class="text-xl font-semibold tracking-tight text-foreground">AI 翻译设置</h1>

@@ -3,6 +3,7 @@ import { ArrowRight, CalendarDays, Folder, Languages, Loader2, Pencil, Plus, Ref
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
+import { usePermission } from '@/composables/use-permission'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
 import { api } from '@/request'
 
@@ -19,6 +20,7 @@ interface I18nProject {
 }
 
 const router = useRouter()
+const { can } = usePermission()
 const projects = ref<I18nProject[]>([])
 const loading = ref(true)
 const loadError = ref('')
@@ -102,6 +104,8 @@ function toggleLang(code: string) {
 }
 
 function openCreate() {
+  if (!can('project.create'))
+    return
   isEditing.value = false
   formError.value = ''
   formData.value = { id: 0, name: '', code: '', description: '' }
@@ -110,6 +114,8 @@ function openCreate() {
 }
 
 function openEdit(project: I18nProject) {
+  if (!can('project.edit'))
+    return
   isEditing.value = true
   formError.value = ''
   formData.value = { id: project.id, name: project.name, code: project.code, description: project.description }
@@ -122,11 +128,15 @@ async function saveLanguages(projectId: number) {
 }
 
 function confirmDelete(project: I18nProject) {
+  if (!can('project.delete'))
+    return
   deletingProject.value = project
   showDeleteDialog.value = true
 }
 
 async function submitForm() {
+  if (!can(isEditing.value ? 'project.edit' : 'project.create'))
+    return
   const name = formData.value.name.trim()
   const code = formData.value.code.trim()
   if (!name || !code) {
@@ -168,6 +178,8 @@ async function submitForm() {
 }
 
 async function doDelete() {
+  if (!can('project.delete'))
+    return
   if (!deletingProject.value || deleting.value)
     return
   deleting.value = true
@@ -228,7 +240,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
             种已配置语言
           </div>
         </div>
-        <UiButton class="rounded-xl" @click="openCreate">
+        <UiButton v-permission="'project.create'" class="rounded-xl" @click="openCreate">
           <Plus class="mr-2 size-4" />
           新建项目
         </UiButton>
@@ -305,7 +317,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
           创建第一个项目，开始组织语言和词条内容。
         </p>
       </div>
-      <UiButton variant="outline" @click="openCreate">
+      <UiButton v-permission="'project.create'" variant="outline" @click="openCreate">
         <Plus class="mr-2 size-4" />
         创建第一个项目
       </UiButton>
@@ -368,10 +380,10 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
             进入工作台
             <ArrowRight class="size-3.5" />
           </UiButton>
-          <UiButton size="icon" variant="ghost" class="size-8" :aria-label="`编辑${project.name}`" :title="`编辑${project.name}`" @click="openEdit(project)">
+          <UiButton v-permission="'project.edit'" size="icon" variant="ghost" class="size-8" :aria-label="`编辑${project.name}`" :title="`编辑${project.name}`" @click="openEdit(project)">
             <Pencil class="size-3.5" />
           </UiButton>
-          <UiButton size="icon" variant="ghost" class="size-8 text-destructive hover:text-destructive" :aria-label="`删除${project.name}`" :title="`删除${project.name}`" @click="confirmDelete(project)">
+          <UiButton v-permission="'project.delete'" size="icon" variant="ghost" class="size-8 text-destructive hover:text-destructive" :aria-label="`删除${project.name}`" :title="`删除${project.name}`" @click="confirmDelete(project)">
             <Trash2 class="size-3.5" />
           </UiButton>
         </div>
@@ -380,7 +392,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
 
     <UiDialog v-model:open="showDialog">
       <UiDialogContent class="sm:max-w-lg">
-        <form novalidate @submit.prevent="submitForm">
+        <form v-permission="isEditing ? 'project.edit' : 'project.create'" novalidate @submit.prevent="submitForm">
           <UiDialogHeader>
             <UiDialogTitle>{{ isEditing ? '编辑项目' : '新建翻译项目' }}</UiDialogTitle>
             <UiDialogDescription>
@@ -493,6 +505,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
             取消
           </UiAlertDialogCancel>
           <UiButton
+            v-permission="'project.delete'"
             type="button"
             :disabled="deleting"
             class="bg-destructive text-destructive-foreground hover:bg-destructive/90"

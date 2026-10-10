@@ -5,12 +5,12 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import * as XLSX from 'xlsx'
+import { usePermission } from '@/composables/use-permission'
 import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from '@/constants/pagination'
 import { requestAITranslation } from '@/lib/ai'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
 import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
 import { api } from '@/request'
-import { useAuthStore } from '@/store/auth'
 
 defineOptions({ name: 'Workbench' })
 
@@ -84,6 +84,13 @@ interface Language {
   code: string
   name: string
   is_source?: boolean
+}
+
+interface LocaleRelease {
+  id: number
+  version: number
+  created_at: string
+  files: Array<{ language_code: string }>
 }
 
 // Only languages configured for this project; drives table columns
@@ -160,18 +167,73 @@ function placeholderInstructionForTerm(term: TermItem) {
 
 const route = useRoute()
 const router = useRouter()
-const authStore = useAuthStore()
+const { role, can } = usePermission()
 
 const projectId = computed(() => route.query.project as string)
-// Roles
-const isAdmin = computed(() => authStore.user?.role === 'admin' || authStore.user?.role === 'owner' || authStore.user?.id === 1)
-const isProductor = computed(() => authStore.user?.role === 'productor')
-const isTranslator = computed(() => authStore.user?.role === 'translator')
-const isDeveloper = computed(() => authStore.user?.role === 'developer')
+// 角色仅用于译员的草稿可见性；操作权限统一使用 can / v-permission。
+const isTranslator = computed(() => role.value === 'translator')
 
 // Project list for the switcher
 const projects = ref<any[]>([])
 const loadingProjects = ref(false)
+const showLocaleReleaseDialog = ref(false)
+const showLocalePublishConfirm = ref(false)
+const localeRelease = ref<LocaleRelease | null>(null)
+const localeReleaseLoading = ref(false)
+const localeReleaseError = ref('')
+const publishingLocaleRelease = ref(false)
+
+async function openLocaleReleaseDialog() {
+  showLocaleReleaseDialog.value = true
+  localeReleaseLoading.value = true
+  localeReleaseError.value = ''
+  localeRelease.value = null
+  try {
+    const response = await api.get<LocaleRelease | null>({ url: `/projects/${projectId.value}/locale-release` })
+    localeRelease.value = response.data
+  }
+  catch (error: any) {
+    localeReleaseError.value = error.message || '读取线上版本失败'
+  }
+  finally {
+    localeReleaseLoading.value = false
+  }
+}
+
+function localePublicUrl(languageCode: string) {
+  const base = String(import.meta.env.VITE_APP_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+  return new URL(`${base}/public/locales/${encodeURIComponent(currentProject.value?.code || '')}/${encodeURIComponent(languageCode)}.json`, window.location.href).href
+}
+
+async function copyLocaleUrl(languageCode: string) {
+  try {
+    await navigator.clipboard.writeText(localePublicUrl(languageCode))
+    toast.success('链接已复制')
+  }
+  catch {
+    toast.error('复制失败，请手动复制链接')
+  }
+}
+
+async function publishLocaleRelease() {
+  if (!can('locale.publish'))
+    return
+  showLocalePublishConfirm.value = false
+  publishingLocaleRelease.value = true
+  localeReleaseError.value = ''
+  try {
+    const response = await api.post<LocaleRelease>({ url: `/projects/${projectId.value}/locale-release/publish` })
+    localeRelease.value = response.data
+    toast.success('语言文件已发布', { description: `当前版本 v${response.data.version}` })
+  }
+  catch (error: any) {
+    localeReleaseError.value = error.message || '发布失败，线上版本未改变'
+    toast.error('语言文件发布失败')
+  }
+  finally {
+    publishingLocaleRelease.value = false
+  }
+}
 
 async function fetchProjects() {
   loadingProjects.value = true
@@ -340,7 +402,7 @@ async function fetchAllMatchingTerms() {
 
 const isSavingPrompt = ref(false)
 async function saveGlobalPrompt() {
-  if (!projectId.value || !isAdmin.value)
+  if (!projectId.value || !can('project.prompt'))
     return
   isSavingPrompt.value = true
   try {
@@ -394,6 +456,9 @@ async function refreshData() {
 
 // Persistence
 watch(projectId, (newId) => {
+  showLocaleReleaseDialog.value = false
+  showLocalePublishConfirm.value = false
+  localeRelease.value = null
   if (newId) {
     localStorage.setItem('last_project_id', newId)
     currentPage.value = 1
@@ -417,6 +482,8 @@ const isGlobalEditing = ref(false)
 const originalTermsJson = ref('')
 
 function enterEditMode() {
+  if (!can('term.edit'))
+    return
   if (selectedCount.value === 0) {
     toast.info('操作提示', {
       description: '请先勾选左侧复选框，选中需要编辑的词条后再进入编辑模式。',
@@ -439,6 +506,8 @@ function enterEditMode() {
 
 const isSavingBatch = ref(false)
 async function saveEditMode() {
+  if (!can('term.edit'))
+    return
   const selectedTerms = selectedTermsForBulk.value
 
   if (selectedTerms.length === 0) {
@@ -616,6 +685,8 @@ const newTermForm = ref({
 })
 
 function addNewTerm() {
+  if (!can('term.create'))
+    return
   newTermForm.value = {
     module: '',
     key: '',
@@ -629,6 +700,8 @@ function addNewTerm() {
 }
 
 async function submitNewTerm() {
+  if (!can('term.create'))
+    return
   if (!newTermForm.value.key) {
     toast.error('必须填写词条 Key')
     return
@@ -668,6 +741,8 @@ async function confirmTranslate() {
 }
 
 async function translateRow(term: TermItem, customPrompt?: string) {
+  if (!can('term.translate'))
+    return
   if (translatingTerms.value.has(term.id))
     return
   if (!term.key) {
@@ -746,6 +821,8 @@ async function translateRow(term: TermItem, customPrompt?: string) {
 const stagedChangeOriginals = ref(new Map<string, string>())
 
 async function persistStagedRow(term: TermItem) {
+  if (!can('term.translate'))
+    return
   try {
     await api.post({
       url: `/projects/${projectId.value}/terms/${term.id}/update`,
@@ -850,6 +927,8 @@ const stagedSelectedIds = computed(() => {
 })
 
 async function batchPersistStaged() {
+  if (!can('term.translate'))
+    return
   if (stagedSelectedTerms.value.length === 0)
     return
   let successCount = 0
@@ -997,6 +1076,8 @@ function clearSelectedTerms() {
 }
 
 async function batchTranslate(customPrompt?: string) {
+  if (!can('term.translate'))
+    return
   let termsToTranslate: TermItem[]
   try {
     termsToTranslate = await resolveSelectedTerms()
@@ -1137,6 +1218,8 @@ function isBulkActionBusy(operation: BulkOperation) {
 }
 
 async function requestBulkAction(operation: BulkOperation) {
+  if (!can(operation === 'delete' ? 'term.delete' : operation === 'publish' ? 'term.publish' : 'term.review'))
+    return
   if (selectedCount.value === 0 || isBulkPreviewing.value || isBulkExecuting.value)
     return
 
@@ -1181,6 +1264,8 @@ async function confirmBulkAction() {
     return
 
   const operation = pendingBulkOperation.value
+  if (!can(operation === 'delete' ? 'term.delete' : operation === 'publish' ? 'term.publish' : 'term.review'))
+    return
   isBulkExecuting.value = true
   bulkActionError.value = ''
   try {
@@ -1215,6 +1300,8 @@ function batchDelete() {
 // Removed activeEditKey and startEdit/stopEdit as they are replaced by Global Edit Mode
 
 async function deleteTerm(id: string | number) {
+  if (!can('term.delete'))
+    return
   try {
     await api.post({ url: `/projects/${projectId.value}/terms/${id}/delete` })
 
@@ -1266,6 +1353,8 @@ function resetBatchAdd() {
 }
 
 function openBatchAddDialog() {
+  if (!can('term.create'))
+    return
   resetBatchAdd()
   showBatchAddModal.value = true
 }
@@ -1356,6 +1445,8 @@ function removeBatchCreateRow(clientId: string) {
 }
 
 async function submitBatchCreate() {
+  if (!can('term.create'))
+    return
   if (!projectId.value || batchCreateRows.value.length === 0 || batchRowErrors.value.size > 0)
     return
 
@@ -1423,14 +1514,14 @@ const isDrawerDirty = computed(() => {
 })
 
 const canPublishInDrawer = computed(() => {
-  if (!activeDrawerTerm.value || isTranslator.value)
+  if (!activeDrawerTerm.value || !can('term.publish'))
     return false
   const originalTerm = terms.value.find(t => Number(t.id) === Number(activeDrawerTerm.value!.id))
   return originalTerm?.status === 'review' && !isDrawerDirty.value
 })
 
 const canApproveReviewInDrawer = computed(() => {
-  if (!activeDrawerTerm.value || isTranslator.value)
+  if (!activeDrawerTerm.value || !can('term.review'))
     return false
   return activeDrawerTerm.value.status !== 'review' && activeDrawerTerm.value.status !== 'published'
 })
@@ -1464,6 +1555,8 @@ function confirmDrawerSave() {
 }
 
 async function saveDrawer() {
+  if (!can('term.edit'))
+    return
   if (!activeDrawerTerm.value)
     return
   savingDrawer.value = true
@@ -1496,6 +1589,8 @@ function getMissingTranslationLanguages(term: TermItem) {
 }
 
 async function approveDrawerReview() {
+  if (!can('term.review'))
+    return
   if (!activeDrawerTerm.value)
     return
 
@@ -1556,6 +1651,8 @@ function confirmDrawerPublish() {
 }
 
 async function publishTerm() {
+  if (!can('term.publish'))
+    return
   if (!activeDrawerTerm.value)
     return
   const placeholderIssues = getTermPlaceholderIssues(activeDrawerTerm.value)
@@ -1584,6 +1681,8 @@ async function publishTerm() {
 
 const translatingDrawer = ref(false)
 async function translateDrawerTerm() {
+  if (!can('term.translate'))
+    return
   if (!activeDrawerTerm.value || !activeDrawerTerm.value.key) {
     toast.warning('缺少关键信息', { description: '请先填写 Key 再翻译' })
     return
@@ -1756,6 +1855,8 @@ function openObjectImportModal() {
 }
 
 async function submitObjectImport() {
+  if (!can('term.import'))
+    return
   if (!objectImportLangCode.value) {
     toast.warning('请选择导入语言')
     return
@@ -1803,6 +1904,8 @@ async function submitObjectImport() {
 }
 
 async function handleJsonImport(event: Event) {
+  if (!can('term.import'))
+    return
   const target = event.target as HTMLInputElement
   const files = target.files
   if (!files || files.length === 0)
@@ -1871,6 +1974,8 @@ async function handleJsonImport(event: Event) {
 }
 
 async function handleExcelImport(event: Event) {
+  if (!can('term.import'))
+    return
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   if (!file)
@@ -2062,6 +2167,8 @@ async function handleExcelImport(event: Event) {
 const defaultExcludedLangs = ['tr', 'bn', 'pl', 'it']
 
 async function copyLangJson(langCode: string, langName: string) {
+  if (!can('term.export'))
+    return
   if (copyingLanguageCode.value)
     return
   copyingLanguageCode.value = langCode
@@ -2160,6 +2267,8 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 async function confirmExport() {
+  if (!can('term.export'))
+    return
   if (selectedExportLangs.value.length === 0) {
     toast.warning('导出提醒', { description: '请至少选择一种语言导出！' })
     return
@@ -2191,6 +2300,8 @@ async function confirmExport() {
 }
 
 async function exportToExcel() {
+  if (!can('term.export'))
+    return
   if (isExportingExcel.value)
     return
   isExportingExcel.value = true
@@ -2301,11 +2412,11 @@ async function exportToExcel() {
                 <span class="mt-0.5 block text-xs font-normal text-muted-foreground">集中处理批量录入、数据导出和项目维护</span>
               </UiDropdownMenuLabel>
               <UiDropdownMenuSeparator />
-              <template v-if="!isTranslator && !isProductor">
-                <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+              <template v-if="can(['term.import', 'term.export'])">
+                <UiDropdownMenuLabel v-if="can('term.import')" class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
                   批量录入
                 </UiDropdownMenuLabel>
-                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingJson || isGlobalEditing" @click="triggerJsonImport">
+                <UiDropdownMenuItem v-permission="'term.import'" class="items-start gap-3 px-2 py-2.5" :disabled="importingJson || isGlobalEditing" @click="triggerJsonImport">
                   <Loader2 v-if="importingJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
                   <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0">
@@ -2313,7 +2424,7 @@ async function exportToExcel() {
                     <span class="mt-0.5 block text-xs text-muted-foreground">一次选择多个语言文件并合并词条</span>
                   </span>
                 </UiDropdownMenuItem>
-                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="importingObjectJson || isGlobalEditing" @click="openObjectImportModal">
+                <UiDropdownMenuItem v-permission="'term.import'" class="items-start gap-3 px-2 py-2.5" :disabled="importingObjectJson || isGlobalEditing" @click="openObjectImportModal">
                   <Loader2 v-if="importingObjectJson" class="mt-0.5 size-4 shrink-0 animate-spin" />
                   <Copy v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0">
@@ -2321,7 +2432,7 @@ async function exportToExcel() {
                     <span class="mt-0.5 block text-xs text-muted-foreground">粘贴代码对象并导入指定语言</span>
                   </span>
                 </UiDropdownMenuItem>
-                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing || importingExcel" @click="triggerExcelImport">
+                <UiDropdownMenuItem v-permission="'term.import'" class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing || importingExcel" @click="triggerExcelImport">
                   <Loader2 v-if="importingExcel" class="mt-0.5 size-4 shrink-0 animate-spin" />
                   <Upload v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0">
@@ -2329,18 +2440,18 @@ async function exportToExcel() {
                     <span class="mt-0.5 block text-xs text-muted-foreground">从表格批量创建词条和译文</span>
                   </span>
                 </UiDropdownMenuItem>
-                <UiDropdownMenuSeparator />
-                <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                <UiDropdownMenuSeparator v-if="can('term.import')" />
+                <UiDropdownMenuLabel v-if="can('term.export')" class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
                   数据导出
                 </UiDropdownMenuLabel>
-                <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="openExportModal">
+                <UiDropdownMenuItem v-permission="'term.export'" class="items-start gap-3 px-2 py-2.5" @click="openExportModal">
                   <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0">
                     <span class="block text-sm font-medium">导出多语言 JSON</span>
                     <span class="mt-0.5 block text-xs text-muted-foreground">按语言生成文件并打包为 ZIP</span>
                   </span>
                 </UiDropdownMenuItem>
-                <UiDropdownMenuItem :disabled="isExportingExcel" class="items-start gap-3 px-2 py-2.5" @click="exportToExcel">
+                <UiDropdownMenuItem v-permission="'term.export'" :disabled="isExportingExcel" class="items-start gap-3 px-2 py-2.5" @click="exportToExcel">
                   <Loader2 v-if="isExportingExcel" class="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
                   <Download v-else class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0">
@@ -2349,11 +2460,19 @@ async function exportToExcel() {
                   </span>
                 </UiDropdownMenuItem>
               </template>
-              <UiDropdownMenuSeparator v-if="!isTranslator && !isProductor" />
+              <UiDropdownMenuSeparator v-if="can('term.import')" />
+              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" @click="openLocaleReleaseDialog">
+                <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">线上语言文件</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">查看公开链接与手动发布的版本</span>
+                </span>
+              </UiDropdownMenuItem>
+              <UiDropdownMenuSeparator />
               <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
                 词条与项目
               </UiDropdownMenuLabel>
-              <UiDropdownMenuItem class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing" @click="openBatchAddDialog">
+              <UiDropdownMenuItem v-permission="'term.create'" class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing" @click="openBatchAddDialog">
                 <ListPlus class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 <span class="min-w-0">
                   <span class="block text-sm font-medium">快捷批量创建</span>
@@ -2361,7 +2480,7 @@ async function exportToExcel() {
                 </span>
               </UiDropdownMenuItem>
               <UiDropdownMenuItem
-                v-if="!isTranslator"
+                v-permission="'logs.view'"
                 class="items-start gap-3 px-2 py-2.5"
                 @click="router.push({ path: '/project-logs', query: { project: projectId } })"
               >
@@ -2371,7 +2490,7 @@ async function exportToExcel() {
                   <span class="mt-0.5 block text-xs text-muted-foreground">查看项目内词条的变更记录</span>
                 </span>
               </UiDropdownMenuItem>
-              <UiDropdownMenuItem v-if="isAdmin" class="items-start gap-3 px-2 py-2.5" @click="showSettingsModal = true">
+              <UiDropdownMenuItem v-permission="'project.prompt'" class="items-start gap-3 px-2 py-2.5" @click="showSettingsModal = true">
                 <Wand2 class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 <span class="min-w-0">
                   <span class="block text-sm font-medium">AI 提示词配置</span>
@@ -2382,6 +2501,7 @@ async function exportToExcel() {
           </UiDropdownMenu>
 
           <UiButton
+            v-permission="'term.edit'"
             v-if="!isGlobalEditing"
             variant="secondary"
             class="rounded-xl border-primary/20 text-primary hover:bg-primary/5"
@@ -2402,6 +2522,7 @@ async function exportToExcel() {
               放弃
             </UiButton>
             <UiButton
+              v-permission="'term.edit'"
               variant="default"
               size="sm"
               :disabled="isSavingBatch"
@@ -2415,7 +2536,7 @@ async function exportToExcel() {
           </div>
 
           <UiButton
-            v-if="isAdmin || isDeveloper"
+            v-permission="'term.create'"
             variant="default"
             :disabled="isGlobalEditing"
             class="rounded-xl"
@@ -2564,8 +2685,8 @@ async function exportToExcel() {
 
           <div class="flex items-center gap-x-2 whitespace-nowrap">
             <!-- Split Batch Translate Button: Developer cannot self-translate -->
-            <div v-if="!isDeveloper" class="inline-flex items-center rounded-md shadow-sm">
-              <UiButton variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-r-none" @click="batchTranslate()">
+            <div v-permission="'term.translate'" class="inline-flex items-center rounded-md shadow-sm">
+              <UiButton v-permission="'term.translate'" variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-r-none" @click="batchTranslate()">
                 <Loader2 v-if="isBatchTranslating" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
                 <Wand2 v-else class="w-3.5 h-3.5 mr-1.5" />
                 AI 批量翻译
@@ -2573,7 +2694,7 @@ async function exportToExcel() {
               <UiTooltipProvider>
                 <UiTooltip>
                   <UiTooltipTrigger as-child>
-                    <UiButton variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-l-none border-l border-primary-foreground/20 px-1.5" @click="openBatchTranslateDialog">
+                    <UiButton v-permission="'term.translate'" variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-l-none border-l border-primary-foreground/20 px-1.5" @click="openBatchTranslateDialog">
                       <ChevronDown class="w-3.5 h-3.5" />
                     </UiButton>
                   </UiTooltipTrigger>
@@ -2584,6 +2705,7 @@ async function exportToExcel() {
 
             <template v-if="stagedSelectedIds.length > 0">
               <UiButton
+                v-permission="'term.translate'"
                 variant="outline"
                 size="sm"
                 class="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
@@ -2605,6 +2727,7 @@ async function exportToExcel() {
             </template>
 
             <UiButton
+              v-permission="'term.review'"
               variant="outline"
               size="sm"
               :disabled="isAnyBulkActionBusy || reviewableSelectedCount === 0"
@@ -2617,6 +2740,7 @@ async function exportToExcel() {
             </UiButton>
 
             <UiButton
+              v-permission="'term.publish'"
               variant="outline"
               size="sm"
               :disabled="isAnyBulkActionBusy || publishableSelectedCount === 0"
@@ -2628,7 +2752,7 @@ async function exportToExcel() {
               批量发布 {{ publishableSelectedCount > 0 ? `(${publishableSelectedCount})` : '' }}
             </UiButton>
 
-            <UiButton variant="destructive" size="sm" :disabled="isAnyBulkActionBusy || deletableSelectedCount === 0" @click="batchDelete">
+            <UiButton v-permission="'term.delete'" variant="destructive" size="sm" :disabled="isAnyBulkActionBusy || deletableSelectedCount === 0" @click="batchDelete">
               <Loader2 v-if="isBulkActionBusy('delete')" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
               <Trash2 v-else class="w-3.5 h-3.5 mr-1.5" />
               批量删除
@@ -2796,9 +2920,10 @@ async function exportToExcel() {
                       </UiTooltip>
 
                       <!-- Translate Button: Developer cannot self-translate -->
-                      <UiTooltip v-if="term.status !== 'published' && !isDeveloper">
+                      <UiTooltip v-if="term.status !== 'published' && can('term.translate')">
                         <UiTooltipTrigger as-child>
                           <UiButton
+                            v-permission="'term.translate'"
                             type="button"
                             variant="ghost"
                             size="icon"
@@ -2826,9 +2951,9 @@ async function exportToExcel() {
                         </UiTooltipContent>
                       </UiTooltip>
 
-                      <UiAlertDialog v-if="term.status !== 'published' && !isTranslator && !isProductor" @update:open="val => presentDeletingId = val ? term.id : null">
+                      <UiAlertDialog v-if="term.status !== 'published' && can('term.delete')" @update:open="val => presentDeletingId = val ? term.id : null">
                         <UiTooltip :open="presentDeletingId === term.id ? false : undefined">
-                          <UiTooltipTrigger v-if="isAdmin || isDeveloper" as-child>
+                          <UiTooltipTrigger v-if="can('term.delete')" as-child>
                             <UiAlertDialogTrigger as-child>
                               <UiButton type="button" variant="ghost" size="icon" class="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" :aria-label="`删除词条 ${term.key}`">
                                 <Trash2 class="w-3.5 h-3.5" />
@@ -2841,7 +2966,7 @@ async function exportToExcel() {
                             </UiButton>
                           </UiTooltipTrigger>
                           <UiTooltipContent side="top">
-                            {{ (isAdmin || isDeveloper) ? '删除词条' : '无权删除' }}
+                            {{ can('term.delete') ? '删除词条' : '无权删除' }}
                           </UiTooltipContent>
                         </UiTooltip>
 
@@ -2854,7 +2979,7 @@ async function exportToExcel() {
                           </UiAlertDialogHeader>
                           <UiAlertDialogFooter>
                             <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-                            <UiAlertDialogAction class="bg-destructive text-white hover:bg-destructive/90" @click="deleteTerm(term.id)">
+                            <UiAlertDialogAction v-permission="'term.delete'" class="bg-destructive text-white hover:bg-destructive/90" @click="deleteTerm(term.id)">
                               确认删除
                             </UiAlertDialogAction>
                           </UiAlertDialogFooter>
@@ -2884,13 +3009,13 @@ async function exportToExcel() {
                       <div class="flex items-center gap-1 flex-1 min-w-0">
                         <UiInput
                           v-model="term.module"
-                          :disabled="isTranslator || isProductor"
+                          :disabled="!can('term.structure')"
                           class="h-6 w-16 text-[10px] font-mono text-primary bg-background border-primary/20 shrink-0 px-1"
                           placeholder="模块"
                         />
                         <UiInput
                           v-model="term.key"
-                          :disabled="isTranslator || isProductor"
+                          :disabled="!can('term.structure')"
                           class="h-6 flex-1 text-xs font-bold border-b border-t-0 border-l-0 border-r-0 border-primary/30 focus-visible:ring-0 px-1 py-0 shadow-none rounded-none placeholder:text-red-400 bg-transparent"
                           placeholder="Key不可为空"
                           @update:model-value="handleKeyUpdate(term)"
@@ -2917,6 +3042,7 @@ async function exportToExcel() {
                     <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
                       <UiInput
                         v-model="term.description"
+                        :disabled="!can('term.description')"
                         class="h-5 text-[10px] w-full px-1 border-gray-100 dark:border-zinc-800 bg-background/50 focus:bg-background"
                         placeholder="添加描述..."
                       />
@@ -2954,7 +3080,7 @@ async function exportToExcel() {
                   <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
                     <UiTextarea
                       v-model="term.translations[lang.code]"
-                      :disabled="isDeveloper"
+                      :disabled="!can('term.translate')"
                       class="w-full min-h-[44px] p-1.5 text-xs shadow-none bg-background border-primary/20 focus-visible:ring-1 focus-visible:ring-primary/20 resize-none transition-all leading-relaxed"
                       :class="hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
                       :placeholder="`输入 ${lang.name}...`"
@@ -3007,7 +3133,7 @@ async function exportToExcel() {
                       {{ projectSummary.total === 0 ? '创建第一条词条，开始建立多语言内容。' : '调整关键词、模块或状态筛选后再试。' }}
                     </p>
                   </div>
-                  <UiButton v-if="projectSummary.total === 0 && (isAdmin || isDeveloper)" variant="outline" size="sm" class="mt-2" @click="showAddTermModal = true">
+                  <UiButton v-if="projectSummary.total === 0" v-permission="'term.create'" variant="outline" size="sm" class="mt-2" @click="showAddTermModal = true">
                     <Plus class="size-3.5 mr-1.5" />
                     新建词条
                   </UiButton>
@@ -3253,6 +3379,7 @@ async function exportToExcel() {
               返回修改
             </UiButton>
             <UiButton
+              v-permission="'term.create'"
               :disabled="isBatchCreatingTerms || batchCreateRows.length === 0 || batchRowErrors.size > 0"
               @click="submitBatchCreate"
             >
@@ -3276,14 +3403,14 @@ async function exportToExcel() {
                   v-model="activeDrawerTerm.module"
                   class="h-8 w-24 text-sm font-mono text-primary bg-transparent border-transparent hover:border-gray-200 focus-visible:ring-1 focus-visible:border-gray-200 shrink-0 px-1 disabled:opacity-80 disabled:bg-transparent disabled:border-transparent disabled:cursor-not-allowed"
                   placeholder="模块"
-                  :disabled="isDrawerTermPublished || isTranslator || isProductor"
+                  :disabled="isDrawerTermPublished || !can('term.structure')"
                 />
                 <span class="text-gray-400 font-bold shrink-0">.</span>
                 <UiInput
                   v-model="activeDrawerTerm.key"
                   class="h-8 flex-1 text-sm font-bold bg-transparent border-transparent hover:border-gray-200 focus-visible:ring-1 focus-visible:border-gray-200 px-1 disabled:opacity-100 disabled:bg-transparent disabled:border-transparent disabled:cursor-not-allowed"
                   placeholder="Key (必填)"
-                  :disabled="isDrawerTermPublished || isTranslator || isProductor"
+                  :disabled="isDrawerTermPublished || !can('term.structure')"
                   @update:model-value="handleKeyUpdate(activeDrawerTerm)"
                 />
               </UiSheetTitle>
@@ -3316,6 +3443,7 @@ async function exportToExcel() {
                     </h3>
                     <UiTextarea
                       v-model="activeDrawerTerm.description"
+                      :disabled="isDrawerTermPublished || !can('term.description')"
                       class="min-h-[80px] text-sm leading-relaxed"
                       placeholder="添加详细的上下文描述，如出现位置、用途等..."
                     />
@@ -3331,7 +3459,7 @@ async function exportToExcel() {
                       多语言翻译
                       <span class="text-xs font-normal text-gray-500">{{ targetLanguages.length }} 个语种</span>
                     </div>
-                    <UiButton v-if="!isDeveloper" variant="outline" size="sm" class="h-7 text-xs px-2 cursor-pointer border-primary/20 hover:border-primary/50 text-primary/80" :disabled="translatingDrawer" @click="translateDrawerTerm">
+                    <UiButton v-permission="'term.translate'" variant="outline" size="sm" class="h-7 text-xs px-2 cursor-pointer border-primary/20 hover:border-primary/50 text-primary/80" :disabled="translatingDrawer" @click="translateDrawerTerm">
                       <Loader2 v-if="translatingDrawer" class="w-3 h-3 mr-1.5 animate-spin" />
                       <Wand2 v-else class="w-3 h-3 mr-1.5" />
                       AI 翻译当前
@@ -3344,7 +3472,7 @@ async function exportToExcel() {
                       </label>
                       <UiTextarea
                         v-model="activeDrawerTerm.translations[lang.code]"
-                        :disabled="isDeveloper"
+                        :disabled="!can('term.translate')"
                         class="min-h-[44px]"
                         :class="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
                         :placeholder="`输入 ${lang.name} 翻译...`"
@@ -3404,6 +3532,7 @@ async function exportToExcel() {
               </UiButton>
               <div class="flex gap-2 flex-1">
                 <UiButton
+                  v-permission="'term.review'"
                   v-if="canApproveReviewInDrawer"
                   variant="outline"
                   class="flex-1 border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30"
@@ -3415,6 +3544,7 @@ async function exportToExcel() {
                   {{ isDrawerDirty ? '保存并校对通过' : '校对通过' }}
                 </UiButton>
                 <UiButton
+                  v-permission="'term.edit'"
                   class="flex-1"
                   :disabled="!isDrawerDirty || savingDrawer"
                   @click="triggerDrawerSave"
@@ -3425,6 +3555,7 @@ async function exportToExcel() {
                 </UiButton>
                 <!-- Publish Button in Drawer -->
                 <UiButton
+                  v-permission="'term.publish'"
                   v-if="canPublishInDrawer"
                   variant="default"
                   class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
@@ -3592,13 +3723,56 @@ async function exportToExcel() {
           <UiButton variant="outline" @click="showObjectImportModal = false">
             取消
           </UiButton>
-          <UiButton :disabled="importingObjectJson || !objectImportText.trim() || !objectImportLangCode" @click="submitObjectImport">
+          <UiButton v-permission="'term.import'" :disabled="importingObjectJson || !objectImportText.trim() || !objectImportLangCode" @click="submitObjectImport">
             <Loader2 v-if="importingObjectJson" class="w-4 h-4 mr-2 animate-spin" />
             确认导入
           </UiButton>
         </UiDialogFooter>
       </UiDialogContent>
     </UiDialog>
+
+    <UiDialog v-model:open="showLocaleReleaseDialog">
+      <UiDialogContent class="sm:max-w-xl">
+        <UiDialogHeader>
+          <UiDialogTitle>线上语言文件</UiDialogTitle>
+          <UiDialogDescription>只有点击发布后，公开链接中的 JSON 才会更新。未出现在本次发布中的词条会保留原值。</UiDialogDescription>
+        </UiDialogHeader>
+        <div v-if="localeReleaseLoading" class="flex min-h-24 items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 class="size-4 animate-spin" /> 正在读取线上版本…
+        </div>
+        <div v-else class="space-y-3">
+          <p v-if="localeReleaseError" role="alert" class="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{{ localeReleaseError }}</p>
+          <p v-if="localeRelease" class="text-sm text-muted-foreground">当前版本 <strong class="font-mono text-foreground">v{{ localeRelease.version }}</strong> · {{ new Date(localeRelease.created_at).toLocaleString('zh-CN') }}</p>
+          <p v-else-if="!localeReleaseError" class="text-sm text-muted-foreground">尚未发布。首次发布后会生成公开链接。</p>
+          <div v-if="localeRelease" class="max-h-64 space-y-2 overflow-y-auto">
+            <div v-for="file in localeRelease.files" :key="file.language_code" class="flex items-center gap-2 rounded-lg border p-2">
+              <span class="w-12 shrink-0 font-mono text-xs">{{ file.language_code }}</span>
+              <a class="min-w-0 flex-1 truncate font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:underline" :href="localePublicUrl(file.language_code)" target="_blank" rel="noopener noreferrer">{{ localePublicUrl(file.language_code) }}</a>
+              <UiButton variant="ghost" size="sm" :aria-label="`复制 ${file.language_code} 链接`" @click="copyLocaleUrl(file.language_code)"><Copy class="size-4" /></UiButton>
+            </div>
+          </div>
+        </div>
+        <UiDialogFooter v-permission="'locale.publish'">
+          <UiButton :disabled="publishingLocaleRelease || localeReleaseLoading || !projectId || isGlobalEditing" @click="showLocalePublishConfirm = true">
+            <Loader2 v-if="publishingLocaleRelease" class="mr-2 size-4 animate-spin" />
+            发布语言文件
+          </UiButton>
+        </UiDialogFooter>
+      </UiDialogContent>
+    </UiDialog>
+
+    <UiAlertDialog :open="showLocalePublishConfirm" @update:open="val => showLocalePublishConfirm = val">
+      <UiAlertDialogContent>
+        <UiAlertDialogHeader>
+          <UiAlertDialogTitle>发布语言文件？</UiAlertDialogTitle>
+          <UiAlertDialogDescription>当前已发布词条将合并进新的 JSON 文件，公开链接会切换到新版本。未发布的修改和缺失词条会保留线上旧值。</UiAlertDialogDescription>
+        </UiAlertDialogHeader>
+        <UiAlertDialogFooter>
+          <UiAlertDialogCancel>取消</UiAlertDialogCancel>
+          <UiAlertDialogAction v-permission="'locale.publish'" @click="publishLocaleRelease">发布语言文件</UiAlertDialogAction>
+        </UiAlertDialogFooter>
+      </UiAlertDialogContent>
+    </UiAlertDialog>
 
     <!-- 导出模态框 -->
     <UiDialog :open="showExportModal" @update:open="val => showExportModal = val">
@@ -3668,6 +3842,7 @@ async function exportToExcel() {
             取消
           </UiButton>
           <UiButton
+            v-permission="'term.export'"
             class="bg-green-600 text-white hover:bg-green-700"
             :disabled="isExportingJson || selectedExportLangs.length === 0"
             @click="confirmExport"
@@ -3737,7 +3912,7 @@ async function exportToExcel() {
           <UiButton variant="outline" @click="showSettingsModal = false">
             取消
           </UiButton>
-          <UiButton :disabled="isSavingPrompt" @click="saveGlobalPrompt">
+          <UiButton v-permission="'project.prompt'" :disabled="isSavingPrompt" @click="saveGlobalPrompt">
             <Loader2 v-if="isSavingPrompt" class="mr-2 h-4 w-4 animate-spin" />
             保存全局配置
           </UiButton>
@@ -3762,12 +3937,12 @@ async function exportToExcel() {
         <div class="space-y-2 py-2">
           <UiTextarea
             v-model="tempPrompt"
-            :disabled="!isAdmin"
+            :disabled="!can('project.prompt')"
             class="min-h-[180px] font-mono text-sm leading-relaxed p-3 bg-gray-50/50 dark:bg-zinc-900/50 disabled:opacity-80"
             placeholder="输入或修改提示词..."
           />
           <p class="text-[11px] text-muted-foreground">
-            此次修改仅对本次翻译有效，不会修改全局设置。<template v-if="isAdmin">
+            此次修改仅对本次翻译有效，不会修改全局设置。<template v-if="can('project.prompt')">
               如需永久修改，请到工具栏的
               <button class="text-primary hover:underline" @click="cancelTranslateDialog(); showSettingsModal = true">
                 提示词设置
@@ -3815,7 +3990,7 @@ async function exportToExcel() {
           <UiButton variant="outline" @click="showAddTermModal = false">
             取消
           </UiButton>
-          <UiButton :disabled="submittingTerm" @click="submitNewTerm">
+          <UiButton v-permission="'term.create'" :disabled="submittingTerm" @click="submitNewTerm">
             <Loader2 v-if="submittingTerm" class="size-4 mr-2 animate-spin" />
             新建
           </UiButton>

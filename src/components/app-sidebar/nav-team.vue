@@ -26,11 +26,18 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 
+import { usePermission } from '@/composables/use-permission'
+
 const { navMain } = defineProps<{
   navMain: NavGroup[]
 }>()
 
 const route = useRoute()
+const { canVisit } = usePermission()
+const visibleGroups = computed(() => navMain.map(group => ({
+  ...group,
+  items: group.items.filter(menu => !menu.url || canVisit(menu.url)),
+})))
 
 const { state, isMobile } = useSidebar()
 
@@ -56,7 +63,7 @@ const isActive = (menu: NavItem): boolean => {
 </script>
 
 <template>
-  <SidebarGroup v-for="group in navMain" :key="group.title">
+  <SidebarGroup v-for="group in visibleGroups" :key="group.title">
     <SidebarGroupLabel>{{ group.title }}</SidebarGroupLabel>
     <SidebarMenu>
       <template v-for="menu in group.items" :key="menu.title">

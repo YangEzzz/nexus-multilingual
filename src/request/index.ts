@@ -9,7 +9,8 @@ import axios from 'axios'
 import qs from 'qs'
 import { ResultEnum } from '@/request/types.ts'
 import router from '@/router/index'
-import { getToken, removeToken } from '@/utils/auth'
+import { useAuthStore } from '@/store/auth'
+import { clearLegacyAuth, getCSRFToken } from '@/utils/session'
 // import router from '@/router'
 
 // 定义响应数据类型
@@ -30,6 +31,7 @@ const request = axios.create({
   baseURL: import.meta.env.VITE_APP_API_BASE_URL,
   timeout: 600000, // 请求超时时间
   adapter: 'fetch',
+  withCredentials: true,
 })
 
 export type RequestError = AxiosError<{
@@ -47,8 +49,10 @@ const errorHandler = (error: RequestError): Promise<never> => {
   switch (status) {
     case 401:
       // 未授权，可以跳转到登录页
-      removeToken()
-      router.push('/auth/sign-in')
+      clearLegacyAuth()
+      useAuthStore().isLogin = false
+      useAuthStore().user = null
+      router.push({ path: '/auth/sign-in', query: { redirect: router.currentRoute.value.fullPath } })
       console.error('未授权，请重新登录')
       break
     case 403:
@@ -68,15 +72,14 @@ const errorHandler = (error: RequestError): Promise<never> => {
 }
 
 // 请求拦截器
-const requestHandler = (
+const requestHandler = async (
   config: InternalAxiosRequestConfig,
-): InternalAxiosRequestConfig | Promise<InternalAxiosRequestConfig> => {
+): Promise<InternalAxiosRequestConfig> => {
   const data = config.data || false
 
-  // 添加token到请求头
-  const token = getToken()
-  if (token) {
-    ;(config.headers as AxiosRequestHeaders).Authorization = `Bearer ${token}`
+  // Cookie 会话的写请求需要 CSRF 校验。
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(config.method?.toUpperCase() || 'GET')) {
+    ;(config.headers as AxiosRequestHeaders)['X-CSRF-Token'] = await getCSRFToken()
   }
 
   if (

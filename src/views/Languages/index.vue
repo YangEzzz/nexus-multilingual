@@ -4,14 +4,14 @@ import { Languages, Loader2, Pencil, Plus, RefreshCcw, Trash2 } from 'lucide-vue
 import { computed, onMounted, ref } from 'vue'
 
 import { toast } from 'vue-sonner'
+import { usePermission } from '@/composables/use-permission'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
 import { api } from '@/request'
-import { useAuthStore } from '@/store/auth'
 
 defineOptions({ name: 'AvailableLanguages' })
 
-const authStore = useAuthStore()
-const canManage = computed(() => authStore.user?.role === 'admin' || authStore.user?.role === 'owner' || Number(authStore.user?.id) === 1)
+const { can } = usePermission()
+const canManage = computed(() => can('language.manage'))
 
 const languages = ref<AvailableLanguage[]>([])
 const loading = ref(false)
@@ -108,6 +108,8 @@ const requestDelete = (language: AvailableLanguage) => {
 }
 
 const deleteLanguage = async () => {
+  if (!canManage.value)
+    return
   if (!deletingLanguage.value || deleting.value)
     return
   deleting.value = true
@@ -147,7 +149,7 @@ onMounted(() => {
       <UiTooltip>
         <UiTooltipTrigger as-child>
           <span>
-            <UiButton :disabled="!canManage" @click="openCreateDialog">
+            <UiButton v-permission="'language.manage'" :disabled="!canManage" @click="openCreateDialog">
               <Plus class="mr-2 size-4" />
               新增语言
             </UiButton>
@@ -200,7 +202,7 @@ onMounted(() => {
             新增后即可在创建和编辑项目时选择。
           </p>
         </div>
-        <UiButton v-if="canManage" variant="outline" size="sm" @click="openCreateDialog">
+        <UiButton v-permission="'language.manage'" variant="outline" size="sm" @click="openCreateDialog">
           新增第一种语言
         </UiButton>
       </div>
@@ -245,6 +247,7 @@ onMounted(() => {
                     <UiTooltipTrigger as-child>
                       <span>
                         <UiButton
+                          v-permission="'language.manage'"
                           variant="ghost"
                           size="icon"
                           :aria-label="`编辑${language.name}`"
@@ -263,6 +266,7 @@ onMounted(() => {
                     <UiTooltipTrigger as-child>
                       <span>
                         <UiButton
+                          v-permission="'language.manage'"
                           variant="ghost"
                           size="icon"
                           class="text-destructive hover:text-destructive"
@@ -291,7 +295,7 @@ onMounted(() => {
 
     <UiDialog v-model:open="showFormDialog">
       <UiDialogContent class="sm:max-w-md">
-        <form novalidate @submit.prevent="saveLanguage">
+        <form v-permission="'language.manage'" novalidate @submit.prevent="saveLanguage">
           <UiDialogHeader>
             <UiDialogTitle>{{ editingLanguage ? '编辑可选语言' : '新增可选语言' }}</UiDialogTitle>
             <UiDialogDescription>语言代码将用于 Excel 表头、JSON 文件名和翻译数据标识。</UiDialogDescription>
@@ -360,7 +364,7 @@ onMounted(() => {
           <UiAlertDialogCancel :disabled="deleting">
             取消
           </UiAlertDialogCancel>
-          <UiButton class="bg-destructive text-destructive-foreground hover:bg-destructive/90" :disabled="deleting" @click="deleteLanguage">
+          <UiButton v-permission="'language.manage'" class="bg-destructive text-destructive-foreground hover:bg-destructive/90" :disabled="deleting" @click="deleteLanguage">
             <Loader2 v-if="deleting" class="mr-2 size-4 animate-spin" />
             {{ deleting ? '正在删除' : '永久删除' }}
           </UiButton>
