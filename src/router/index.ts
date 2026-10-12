@@ -26,11 +26,13 @@ const baseRoutes: RouteRecordRaw[] = [
     path: '/tasks',
     component: () => import('@/layouts/index.vue'),
     children: [
-      {
-        path: '',
-        name: 'tasks',
-        component: () => import('@/views/Tasks/index.vue'),
-      },
+      ...(import.meta.env.DEV
+        ? [{
+            path: '',
+            name: 'tasks',
+            component: () => import('@/views/Tasks/index.vue'),
+          }]
+        : []),
       {
         path: '/workbench',
         name: 'workbench',
@@ -125,6 +127,7 @@ const baseRoutes: RouteRecordRaw[] = [
       },
     ],
   },
+  { path: '/:pathMatch(.*)*', redirect: '/errors/404' },
 ]
 
 const publicRoutes = ['/auth/sign-in', '/auth/sign-in-2', '/auth/sign-up', '/auth/forgot-password', '/auth/otp', '/errors/401', '/errors/403', '/errors/404', '/errors/500', '/errors/503']

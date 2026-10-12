@@ -30,11 +30,12 @@
 
 ```ts
 const { can } = usePermission()
-const deleteTerm = async () => {
+const _deleteTerm = async () => {
   if (!can('term.delete'))
     return
   await api.post({ url: '/projects/1/terms/1/delete' })
 }
+void _deleteTerm
 ```
 
 ```vue

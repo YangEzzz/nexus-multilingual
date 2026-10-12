@@ -1,35 +1,31 @@
 <script setup lang="ts">
-import { Activity, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Copy, Download, Edit3, FolderKanban, ListPlus, Loader2, Plus, RotateCcw, Save, Search, Trash2, Upload, Wand2, Wrench, X } from 'lucide-vue-next'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-
-import { useRoute, useRouter } from 'vue-router'
+import type { BatchCreateResult, Project, ProjectLanguage, TermDTO, TermItem, Translation } from '@/types/domain'
+import { Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Copy, Download, Edit3, FolderKanban, ListPlus, Loader2, Plus, RotateCcw, Save, Search, Trash2, Upload, Wand2, Wrench, X } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import * as XLSX from 'xlsx'
+
+import { getLocaleRelease, getPublicLocaleUrl, publishLocaleRelease as requestPublishLocaleRelease } from '@/api/locales'
+
+import { getProject, listProjectLanguages, listProjects, updateProject } from '@/api/projects'
+
+import { batchCreateTerms, batchUpdateTerms, copyTermExport, createTerm, downloadTermsExcel, downloadTermsJson, executeTermBulk, listTerms, previewTermBulk, deleteTerm as requestDeleteTerm, publishTerm as requestPublishTerm, updateTerm } from '@/api/terms'
+import { useDiscardConfirmation } from '@/composables/use-discard-confirmation'
 import { usePermission } from '@/composables/use-permission'
+import { useRequestScope } from '@/composables/use-request-scope'
+import { useTermImport } from '@/composables/use-term-import'
+import { useTermTranslation } from '@/composables/use-term-translation'
 import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from '@/constants/pagination'
 import { requestAITranslation } from '@/lib/ai'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
+import { errorMessage } from '@/lib/errors'
 import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
-import { api } from '@/request'
+import { captureTermDraft, restoreTermDraft } from '@/lib/term-draft'
+import { DEFAULT_TRANSLATION_PROMPT, mapApiTerm, termUpdatePayload } from '@/lib/terms'
+import TermEditorSheet from './components/TermEditorSheet.vue'
+import TermExportDialog from './components/TermExportDialog.vue'
 
 defineOptions({ name: 'Workbench' })
-
-interface Translation {
-  [key: string]: string
-}
-
-interface TermItem {
-  id: string
-  module: string
-  key: string
-  description: string
-  translations: Translation
-  status: 'draft' | 'pending' | 'review' | 'published'
-  updatedAt?: string
-  created_at?: string
-  updated_at?: string
-  history?: Array<{ time: string, action: string, user: string }>
-}
 
 interface BatchCreateRow {
   clientId: string
@@ -47,7 +43,7 @@ interface TermStatusCounts {
 }
 
 interface TermListResponse {
-  items: any[]
+  items: TermDTO[]
   total: number
   page: number
   page_size: number
@@ -80,11 +76,7 @@ interface TermBulkResult {
   skip_reasons: Record<string, number>
 }
 
-interface Language {
-  code: string
-  name: string
-  is_source?: boolean
-}
+type Language = ProjectLanguage
 
 interface LocaleRelease {
   id: number
@@ -169,12 +161,14 @@ const route = useRoute()
 const router = useRouter()
 const { role, can } = usePermission()
 
-const projectId = computed(() => route.query.project as string)
+const projectId = computed(() => typeof route.query.project === 'string' ? route.query.project : '')
+const requestScope = useRequestScope(() => projectId.value)
+const translationService = useTermTranslation(requestAITranslation, requestScope.capture)
 // 角色仅用于译员的草稿可见性；操作权限统一使用 can / v-permission。
 const isTranslator = computed(() => role.value === 'translator')
 
 // Project list for the switcher
-const projects = ref<any[]>([])
+const projects = ref<Project[]>([])
 const loadingProjects = ref(false)
 const showLocaleReleaseDialog = ref(false)
 const showLocalePublishConfirm = ref(false)
@@ -189,11 +183,11 @@ async function openLocaleReleaseDialog() {
   localeReleaseError.value = ''
   localeRelease.value = null
   try {
-    const response = await api.get<LocaleRelease | null>({ url: `/projects/${projectId.value}/locale-release` })
+    const response = await getLocaleRelease<LocaleRelease | null>(projectId.value)
     localeRelease.value = response.data
   }
-  catch (error: any) {
-    localeReleaseError.value = error.message || '读取线上版本失败'
+  catch (error: unknown) {
+    localeReleaseError.value = errorMessage(error) || '读取线上版本失败'
   }
   finally {
     localeReleaseLoading.value = false
@@ -201,8 +195,7 @@ async function openLocaleReleaseDialog() {
 }
 
 function localePublicUrl(languageCode: string) {
-  const base = String(import.meta.env.VITE_APP_API_BASE_URL || '/api/v1').replace(/\/$/, '')
-  return new URL(`${base}/public/locales/${encodeURIComponent(currentProject.value?.code || '')}/${encodeURIComponent(languageCode)}.json`, window.location.href).href
+  return getPublicLocaleUrl(currentProject.value?.code || '', languageCode)
 }
 
 async function copyLocaleUrl(languageCode: string) {
@@ -222,12 +215,12 @@ async function publishLocaleRelease() {
   publishingLocaleRelease.value = true
   localeReleaseError.value = ''
   try {
-    const response = await api.post<LocaleRelease>({ url: `/projects/${projectId.value}/locale-release/publish` })
+    const response = await requestPublishLocaleRelease<LocaleRelease>(projectId.value)
     localeRelease.value = response.data
     toast.success('语言文件已发布', { description: `当前版本 v${response.data.version}` })
   }
-  catch (error: any) {
-    localeReleaseError.value = error.message || '发布失败，线上版本未改变'
+  catch (error: unknown) {
+    localeReleaseError.value = errorMessage(error) || '发布失败，线上版本未改变'
     toast.error('语言文件发布失败')
   }
   finally {
@@ -238,7 +231,7 @@ async function publishLocaleRelease() {
 async function fetchProjects() {
   loadingProjects.value = true
   try {
-    const res = await api.get<any[]>({ url: '/projects' })
+    const res = await listProjects<Project[]>()
     projects.value = res.data ?? []
 
     // If no project in URL, try to auto-load the last one or the first one
@@ -246,7 +239,7 @@ async function fetchProjects() {
       const lastId = localStorage.getItem('last_project_id')
       const targetId = lastId && projects.value.some(p => String(p.id) === lastId)
         ? lastId
-        : String(projects.value[0].id)
+        : String(projects.value[0]?.id || '')
 
       router.replace({ query: { ...route.query, project: targetId } })
     }
@@ -274,17 +267,6 @@ const projectSummary = ref({
 })
 let latestTermsRequest = 0
 
-function mapApiTerm(term: any): TermItem {
-  return {
-    ...term,
-    id: String(term.id),
-    translations: term.translations?.reduce((acc: Translation, translation: any) => {
-      acc[translation.language_code] = translation.content
-      return acc
-    }, {} as Translation) || {},
-  }
-}
-
 function getTermFilterParams() {
   return {
     search: searchQuery.value.trim() || undefined,
@@ -305,33 +287,23 @@ function getTermListParams(page = currentPage.value, size = pageSize.value) {
 }
 
 async function loadProjectLanguages() {
-  if (!projectId.value)
+  const ticket = requestScope.request()
+  if (!ticket.context) {
+    ticket.release()
     return
-
-  const cachedStr = sessionStorage.getItem(`project_langs_${projectId.value}`)
-  if (cachedStr) {
-    try {
-      const parsed = JSON.parse(cachedStr)
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        targetLanguages.value = parsed.map((l: any) => ({ code: l.code, name: l.name, is_source: l.is_source }))
-        return
-      }
-    }
-    catch { /* ignore */ }
   }
-
   try {
-    const res = await api.get<any>({ url: `/projects/${projectId.value}/languages` })
-    if (res.code === 200 && res.data?.length) {
-      targetLanguages.value = res.data.map((l: any) => ({ code: l.code, name: l.name, is_source: l.is_source }))
-    }
-    else {
-      targetLanguages.value = availableLanguages.value
+    const res = await listProjectLanguages<ProjectLanguage[]>(ticket.context, { signal: ticket.signal })
+    if (ticket.isCurrent())
+      targetLanguages.value = res.data ?? []
+  }
+  catch (error) {
+    if (ticket.isCurrent()) {
+      targetLanguages.value = []
+      toast.error('获取项目语言失败', { description: errorMessage(error) })
     }
   }
-  catch {
-    targetLanguages.value = availableLanguages.value
-  }
+  finally { ticket.release() }
 }
 
 async function loadAvailableLanguages() {
@@ -347,17 +319,21 @@ async function loadAvailableLanguages() {
 async function loadTerms() {
   if (!projectId.value)
     return
+  if (isGlobalEditing.value)
+    return
+  const ticket = requestScope.request()
   const requestId = ++latestTermsRequest
   loadingTerms.value = true
   try {
-    const res = await api.get<TermListResponse>({
-      url: `/projects/${projectId.value}/terms`,
+    const res = await listTerms<TermListResponse>(ticket.context, {
+
+      signal: ticket.signal,
       params: getTermListParams(),
     })
-    if (requestId !== latestTermsRequest)
+    if (requestId !== latestTermsRequest || !ticket.isCurrent() || isGlobalEditing.value)
       return
 
-    terms.value = (res.data?.items || []).map(mapApiTerm)
+    terms.value = (res.data?.items || []).map(mapApiTerm).map(term => stagedChangeOriginals.value.has(term.id) ? terms.value.find(row => row.id === term.id) || selectedTermCache.value.get(term.id) || term : term)
     totalTerms.value = Number(res.data?.total || 0)
     totalPages.value = Math.max(1, Number(res.data?.total_pages || 1))
     modules.value = res.data?.modules || []
@@ -372,27 +348,31 @@ async function loadTerms() {
     }
     syncSelectedTermCacheFromPage()
   }
-  catch (error: any) {
-    if (requestId === latestTermsRequest) {
-      toast.error('获取词条失败', { description: error.message })
+  catch (error: unknown) {
+    if (requestId === latestTermsRequest && ticket.isCurrent()) {
+      toast.error('获取词条失败', { description: errorMessage(error) })
     }
   }
   finally {
-    if (requestId === latestTermsRequest)
+    ticket.release()
+    if (requestId === latestTermsRequest && ticket.isCurrent())
       loadingTerms.value = false
   }
 }
 
 async function fetchAllMatchingTerms() {
+  const ticket = requestScope.capture()
   const collected: TermItem[] = []
   const baseParams = getTermListParams(1, 200)
   let page = 1
   let pages = 1
   do {
-    const res = await api.get<TermListResponse>({
-      url: `/projects/${projectId.value}/terms`,
+    const res = await listTerms<TermListResponse>(ticket.context, {
+
       params: { ...baseParams, page },
     })
+    if (!ticket.isCurrent())
+      throw new Error('项目已切换，请重新选择词条')
     collected.push(...(res.data?.items || []).map(mapApiTerm))
     pages = Math.max(1, Number(res.data?.total_pages || 1))
     page++
@@ -402,12 +382,14 @@ async function fetchAllMatchingTerms() {
 
 const isSavingPrompt = ref(false)
 async function saveGlobalPrompt() {
+  if (isSavingPrompt.value)
+    return
   if (!projectId.value || !can('project.prompt'))
     return
   isSavingPrompt.value = true
   try {
-    await api.post({
-      url: `/projects/${projectId.value}/update`,
+    await updateProject(projectId.value, {
+
       data: {
         ai_prompt: globalPrompt.value,
       },
@@ -415,8 +397,8 @@ async function saveGlobalPrompt() {
     toast.success('配置已保存', { description: '全局 AI 提示词已更新。' })
     showSettingsModal.value = false
   }
-  catch (e: any) {
-    toast.error('保存失败', { description: e.message })
+  catch (e: unknown) {
+    toast.error('保存失败', { description: errorMessage(e) })
   }
   finally {
     isSavingPrompt.value = false
@@ -424,19 +406,22 @@ async function saveGlobalPrompt() {
 }
 
 async function loadProjectDetails() {
-  if (!projectId.value)
+  const ticket = requestScope.request()
+  if (!ticket.context) {
+    ticket.release()
     return
+  }
+  globalPrompt.value = DEFAULT_TRANSLATION_PROMPT
   try {
-    const res = await api.get<any>({ url: `/projects/${projectId.value}` })
-    if (res.code === 200 && res.data) {
-      if (res.data.ai_prompt) {
-        globalPrompt.value = res.data.ai_prompt
-      }
-    }
+    const res = await getProject<Project>(ticket.context, { signal: ticket.signal })
+    if (ticket.isCurrent())
+      globalPrompt.value = res.data.ai_prompt || DEFAULT_TRANSLATION_PROMPT
   }
-  catch (e) {
-    console.error('Failed to load project details', e)
+  catch (error) {
+    if (ticket.isCurrent())
+      toast.error('获取项目配置失败', { description: errorMessage(error) })
   }
+  finally { ticket.release() }
 }
 
 async function refreshData() {
@@ -446,7 +431,10 @@ async function refreshData() {
   }
   // Start the table feedback before the language/project detail requests.
   loadingTerms.value = true
+  const ticket = requestScope.capture()
   await loadAvailableLanguages()
+  if (!ticket.isCurrent())
+    return
   await Promise.all([
     loadProjectLanguages(),
     loadTerms(),
@@ -456,6 +444,9 @@ async function refreshData() {
 
 // Persistence
 watch(projectId, (newId) => {
+  requestScope.invalidate()
+  latestTermsRequest++
+  resetProjectState()
   showLocaleReleaseDialog.value = false
   showLocalePublishConfirm.value = false
   localeRelease.value = null
@@ -465,7 +456,7 @@ watch(projectId, (newId) => {
     clearSelectedTerms()
     refreshData()
   }
-})
+}, { flush: 'sync' })
 
 onMounted(async () => {
   await fetchProjects()
@@ -500,12 +491,16 @@ function enterEditMode() {
     })
     return
   }
-  originalTermsJson.value = JSON.stringify(terms.value)
+  latestTermsRequest++
+  loadingTerms.value = false
+  originalTermsJson.value = captureTermDraft(terms.value, selectedTermCache.value)
   isGlobalEditing.value = true
 }
 
 const isSavingBatch = ref(false)
 async function saveEditMode() {
+  if (isSavingBatch.value)
+    return
   if (!can('term.edit'))
     return
   const selectedTerms = selectedTermsForBulk.value
@@ -519,15 +514,11 @@ async function saveEditMode() {
   try {
     const payload = selectedTerms.map(t => ({
       id: t.id,
-      module: t.module,
-      key: t.key,
-      description: t.description,
-      status: t.status,
-      translations: t.translations,
+      ...termUpdatePayload(t),
     }))
 
-    await api.post({
-      url: `/projects/${projectId.value}/terms/batch-update`,
+    await batchUpdateTerms(projectId.value, {
+
       data: { terms: payload },
     })
 
@@ -536,8 +527,8 @@ async function saveEditMode() {
     originalTermsJson.value = ''
     loadTerms() // 刷新最新状态
   }
-  catch (error: any) {
-    toast.error('保存失败', { description: error.message || '网络或服务器错误' })
+  catch (error: unknown) {
+    toast.error('保存失败', { description: errorMessage(error) || '网络或服务器错误' })
   }
   finally {
     isSavingBatch.value = false
@@ -545,7 +536,14 @@ async function saveEditMode() {
 }
 
 function discardEditMode() {
-  terms.value = JSON.parse(originalTermsJson.value)
+  if (!originalTermsJson.value)
+    return
+  const snapshot = restoreTermDraft(originalTermsJson.value)
+  terms.value = snapshot.terms
+  selectedTermCache.value = snapshot.selected
+  selectedTermIds.value = Array.from(snapshot.selected.keys())
+  syncSelectedTermCacheFromPage()
+  originalTermsJson.value = ''
   isGlobalEditing.value = false
   toast.info('已放弃更改', { description: '数据已回滚到编辑前的状态。' })
 }
@@ -598,13 +596,6 @@ async function clearSearchField(field: 'key' | 'zh' | 'en') {
   document.getElementById(fields[field].id)?.focus()
 }
 
-function isReadyForReview(term: TermItem) {
-  return term.status !== 'review'
-    && term.status !== 'published'
-    && Boolean(term.key?.trim())
-    && getMissingTranslationLanguages(term).length === 0
-}
-
 const paginatedTerms = computed(() => terms.value)
 const pageStart = computed(() => totalTerms.value === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1)
 const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, totalTerms.value))
@@ -613,6 +604,8 @@ let termsReloadTimer: number | undefined
 let suppressNextPageReload = false
 
 function scheduleTermsReload(delay = 0, resetPage = false) {
+  if (isGlobalEditing.value || stagedChangeOriginals.value.size > 0)
+    return
   if (resetPage && currentPage.value !== 1) {
     suppressNextPageReload = true
     currentPage.value = 1
@@ -700,6 +693,8 @@ function addNewTerm() {
 }
 
 async function submitNewTerm() {
+  if (submittingTerm.value)
+    return
   if (!can('term.create'))
     return
   if (!newTermForm.value.key) {
@@ -708,16 +703,16 @@ async function submitNewTerm() {
   }
   submittingTerm.value = true
   try {
-    await api.post({
-      url: `/projects/${projectId.value}/terms`,
+    await createTerm(projectId.value, {
+
       data: newTermForm.value,
     })
     toast.success('词条创建成功')
     showAddTermModal.value = false
     loadTerms()
   }
-  catch (e: any) {
-    toast.error('创建失败', { description: e.message })
+  catch (e: unknown) {
+    toast.error('创建失败', { description: errorMessage(e) })
   }
   finally {
     submittingTerm.value = false
@@ -740,106 +735,65 @@ async function confirmTranslate() {
   await batchTranslate(prompt)
 }
 
-async function translateRow(term: TermItem, customPrompt?: string) {
-  if (!can('term.translate'))
-    return
-  if (translatingTerms.value.has(term.id))
-    return
-  if (!term.key) {
-    toast.error('翻译失败', { description: '请先填写词条 Key 以后再进行翻译。' })
-    return
+async function translateRow(term: TermItem, customPrompt?: string): Promise<'success' | 'failed' | 'skipped'> {
+  if (!can('term.translate') || translatingTerms.value.has(term.id) || term.status === 'published')
+    return 'skipped'
+  if (!term.key || !(Object.values(term.translations).some(text => text.trim()) || term.description?.trim())) {
+    toast.error('无法翻译', { description: '请填写 Key 和至少一种参考译文或描述。' })
+    return 'skipped'
   }
-
-  // 检查是否有参考内容
-  const hasReference = Object.values(term.translations).some(v => v && v.trim()) || term.description?.trim()
-  if (!hasReference) {
-    toast.error('翻译失败', { description: '词条缺少参考内容（描述或已有翻译），AI 无法进行有效翻译。' })
-    return
-  }
-
+  const ticket = requestScope.capture()
+  const original = JSON.stringify(term)
+  const languages = targetLanguages.value.map(lang => lang.code)
   translatingTerms.value.add(term.id)
   try {
-    // 构建用户提示词
-    let userPrompt: string
-    if (customPrompt) {
-      userPrompt = customPrompt
-    }
-    else {
-      const translationsStr = Object.entries(term.translations)
-        .filter(([_, val]) => val)
-        .map(([lang, val]) => `${lang}: ${val}`)
-        .join('\n')
-      userPrompt = globalPrompt.value
-        .replace('{description}', term.description || '无')
-        .replace('{translations}', translationsStr || '无')
-    }
-
-    const { translations: translatedData } = await requestAITranslation({
-      prompt: userPrompt,
-      targetLanguages: targetLanguages.value.map(lang => lang.code),
+    const outcome = await translationService.translate(term, {
+      template: customPrompt || globalPrompt.value,
+      languages,
       placeholderRule: placeholderInstructionForTerm(term),
+      isActive: () => ticket.isCurrent(),
     })
-
-    // Backup for undo
-    if (!stagedChangeOriginals.value.has(term.id)) {
-      stagedChangeOriginals.value.set(term.id, JSON.stringify(term))
-    }
-
-    targetLanguages.value.forEach((lang) => {
-      if (translatedData[lang.code] !== undefined) {
-        term.translations[lang.code] = translatedData[lang.code]
-      }
-    })
-
-    const placeholderIssues = getTermPlaceholderIssues(term)
-    if (placeholderIssues.length > 0) {
-      toast.warning('AI 翻译完成，但占位符需要复核', {
-        description: placeholderIssues.map(item => item.lang.name).join('、'),
-      })
-    }
-
-    if (!term.history)
-      term.history = []
-    term.history.unshift({
-      time: new Date().toLocaleString(),
-      action: '使用了 AI 进行了全语言自动翻译 (待确认)',
-      user: 'AI 助理',
-    })
-    term.status = 'review'
-    term.updatedAt = new Date().toLocaleString()
+    if (outcome !== 'success')
+      return outcome
+    if (!stagedChangeOriginals.value.has(term.id))
+      stagedChangeOriginals.value.set(term.id, original)
+    const issues = getTermPlaceholderIssues(term)
+    if (issues.length)
+      toast.warning('AI 翻译完成，但占位符需要复核', { description: issues.map(item => item.lang.name).join('、') })
+    return 'success'
   }
-  catch (error: unknown) {
-    console.error('AI 翻译失败:', error)
-    toast.error('AI 翻译失败', { description: error instanceof Error ? error.message : '请求翻译服务失败，请稍后重试。' })
+  catch (error) {
+    if (ticket.isCurrent())
+      toast.error('AI 翻译失败', { description: errorMessage(error) })
+    return 'failed'
   }
-  finally {
-    translatingTerms.value.delete(term.id)
-  }
+  finally { translatingTerms.value.delete(term.id) }
 }
 
 // Track rows that have been modified locally but not yet saved (e.g. by AI)
 const stagedChangeOriginals = ref(new Map<string, string>())
 
+const persistingStaged = ref(false)
 async function persistStagedRow(term: TermItem) {
+  if (persistingStaged.value)
+    return
   if (!can('term.translate'))
     return
+  persistingStaged.value = true
   try {
-    await api.post({
-      url: `/projects/${projectId.value}/terms/${term.id}/update`,
+    await updateTerm(projectId.value, term.id, {
+
       data: {
-        module: term.module,
-        key: term.key,
-        description: term.description,
-        status: term.status,
-        translations: term.translations,
+        ...termUpdatePayload(term),
       },
     })
     stagedChangeOriginals.value.delete(term.id)
     toast.success('已应用翻译', { description: '内容也已保存到数据库。' })
   }
-  catch (e: any) {
-    toast.error('保存失败', { description: e.message })
+  catch (e: unknown) {
+    toast.error('保存失败', { description: errorMessage(e) })
   }
+  finally { persistingStaged.value = false }
 }
 
 function discardStagedRow(term: TermItem) {
@@ -927,32 +881,36 @@ const stagedSelectedIds = computed(() => {
 })
 
 async function batchPersistStaged() {
+  if (persistingStaged.value)
+    return
   if (!can('term.translate'))
     return
   if (stagedSelectedTerms.value.length === 0)
     return
+  persistingStaged.value = true
+  let failCount = 0
   let successCount = 0
 
   for (const term of stagedSelectedTerms.value) {
     try {
-      await api.post({
-        url: `/projects/${projectId.value}/terms/${term.id}/update`,
+      await updateTerm(projectId.value, term.id, {
+
         data: {
-          module: term.module,
-          key: term.key,
-          description: term.description,
-          status: term.status,
-          translations: term.translations,
+          ...termUpdatePayload(term),
         },
       })
       stagedChangeOriginals.value.delete(term.id)
       successCount++
     }
     catch (e) {
+      failCount++
       console.error(`Failed to persist ${term.id}`, e)
     }
   }
-  toast.success('批量应用成功', { description: `已保存 ${successCount} 个词条的 AI 翻译。` })
+  persistingStaged.value = false
+  if (failCount)
+    toast.warning('部分翻译未保存', { description: `成功 ${successCount} 条，失败 ${failCount} 条。失败项已保留，可重试。` })
+  else toast.success('批量应用成功', { description: `已保存 ${successCount} 个词条的 AI 翻译。` })
 }
 
 function batchDiscardStaged() {
@@ -969,11 +927,7 @@ function batchDiscardStaged() {
 const isBatchTranslating = ref(false)
 const showSettingsModal = ref(false)
 const pendingBatchTranslate = ref(false) // 批量自定义提示词弹窗状态
-const globalPrompt = ref(`翻译以下内容，这是一个智能体APP的内容并将其翻译为本地化语言。
-待翻译原文参考：
-描述和上下文: {description}
-现有参考翻译 (若有可参考，若无请根据键名和描述推断):
-{translations}`)
+const globalPrompt = ref(DEFAULT_TRANSLATION_PROMPT)
 
 const isAllSelected = computed(() => {
   return paginatedTerms.value.length > 0 && paginatedTerms.value.every(term => isTermSelected(term))
@@ -1003,8 +957,8 @@ const canSelectAllFiltered = computed(() => {
     && !isAllFilteredSelected.value
 })
 
-function toggleSelectTerm(id: string, checked: any) {
-  const isChecked = checked === true || checked === 'true'
+function toggleSelectTerm(id: string, checked: boolean | 'indeterminate') {
+  const isChecked = checked === true
   const normalizedId = String(id)
   const term = terms.value.find(item => String(item.id) === normalizedId)
   if (selectionMode.value === 'all_filtered') {
@@ -1032,8 +986,8 @@ function toggleSelectTerm(id: string, checked: any) {
   }
 }
 
-function handleSelectAll(checked: any) {
-  const isChecked = checked === true || checked === 'true'
+function handleSelectAll(checked: boolean | 'indeterminate') {
+  const isChecked = checked === true
   const pageIds = paginatedTerms.value.map(t => String(t.id))
   if (selectionMode.value === 'all_filtered') {
     if (isChecked) {
@@ -1076,63 +1030,29 @@ function clearSelectedTerms() {
 }
 
 async function batchTranslate(customPrompt?: string) {
-  if (!can('term.translate'))
-    return
-  let termsToTranslate: TermItem[]
-  try {
-    termsToTranslate = await resolveSelectedTerms()
-  }
-  catch (error: any) {
-    toast.error('无法读取全部选中词条', { description: error.message })
-    return
-  }
-  if (termsToTranslate.length === 0)
+  if (!can('term.translate') || isBatchTranslating.value)
     return
   isBatchTranslating.value = true
-  let successCount = 0
-  let failCount = 0
-
-  // 并发请求数量控制 (控制在3个以内避免超出 AI API 频率限制)
-  const batchSize = 3
-  for (let i = 0; i < termsToTranslate.length; i += batchSize) {
-    const batchList = termsToTranslate.slice(i, i + batchSize)
-    const promises = batchList.map(async (term) => {
-      if (term && term.status !== 'published') {
-        try {
-          // 如果有自定义提示词，需居中注入当前词条的变量
-          let termPrompt: string | undefined
-          if (customPrompt) {
-            const translationsStr = Object.entries(term.translations)
-              .filter(([_, val]) => val)
-              .map(([lang, val]) => `${lang}: ${val}`)
-              .join('\n')
-            termPrompt = customPrompt
-              .replace('{description}', term.description || '无')
-              .replace('{translations}', translationsStr || '无')
-          }
-          await translateRow(term, termPrompt)
-          successCount++
-        }
-        catch (error) {
-          failCount++
-        }
-      }
-    })
-    await Promise.all(promises)
+  const ticket = requestScope.capture()
+  const counts = { success: 0, failed: 0, skipped: 0 }
+  try {
+    const selected = await resolveSelectedTerms()
+    for (let index = 0; index < selected.length && ticket.isCurrent(); index += 3) {
+      const results = await Promise.all(selected.slice(index, index + 3).map(term => translateRow(term, customPrompt)))
+      results.forEach(result => counts[result]++)
+    }
+    if (!ticket.isCurrent() || !selected.length)
+      return
+    const description = `成功 ${counts.success} 条，失败 ${counts.failed} 条，跳过 ${counts.skipped} 条。`
+    if (counts.failed || counts.skipped)
+      toast.warning('批量翻译完成', { description })
+    else toast.success('批量翻译完成', { description })
   }
-
-  isBatchTranslating.value = false
-
-  if (failCount > 0) {
-    toast.warning('批量翻译完成', {
-      description: `成功: ${successCount}，失败: ${failCount}。可能是 AI 响应超时或由于并发限制导致。`,
-    })
+  catch (error) {
+    if (ticket.isCurrent())
+      toast.error('批量翻译失败', { description: errorMessage(error) })
   }
-  else {
-    toast.success('批量翻译成功', {
-      description: `已成功为您翻译了 ${successCount} 个选中的词条。`,
-    })
-  }
+  finally { isBatchTranslating.value = false }
 }
 
 function openBatchTranslateDialog() {
@@ -1230,8 +1150,8 @@ async function requestBulkAction(operation: BulkOperation) {
   bulkActionError.value = ''
   isBulkPreviewing.value = true
   try {
-    const response = await api.post<TermBulkResult>({
-      url: `/projects/${projectId.value}/terms/bulk/preview`,
+    const response = await previewTermBulk<TermBulkResult>(projectId.value, {
+
       data: { operation, scope },
     })
     bulkPreview.value = response.data
@@ -1243,8 +1163,8 @@ async function requestBulkAction(operation: BulkOperation) {
     }
     showBulkConfirmDialog.value = true
   }
-  catch (error: any) {
-    toast.error('批量操作预检查失败', { description: error.message })
+  catch (error: unknown) {
+    toast.error('批量操作预检查失败', { description: errorMessage(error) })
   }
   finally {
     isBulkPreviewing.value = false
@@ -1269,8 +1189,8 @@ async function confirmBulkAction() {
   isBulkExecuting.value = true
   bulkActionError.value = ''
   try {
-    const response = await api.post<TermBulkResult>({
-      url: `/projects/${projectId.value}/terms/bulk/execute`,
+    const response = await executeTermBulk<TermBulkResult>(projectId.value, {
+
       data: { operation, scope: pendingBulkScope.value },
     })
     const result = response.data
@@ -1281,8 +1201,8 @@ async function confirmBulkAction() {
       description: `成功 ${result.succeeded} 条，跳过 ${result.skipped} 条。`,
     })
   }
-  catch (error: any) {
-    bulkActionError.value = error.message || '服务端未能完成操作，请重试。'
+  catch (error: unknown) {
+    bulkActionError.value = errorMessage(error) || '服务端未能完成操作，请重试。'
   }
   finally {
     isBulkExecuting.value = false
@@ -1303,14 +1223,17 @@ async function deleteTerm(id: string | number) {
   if (!can('term.delete'))
     return
   try {
-    await api.post({ url: `/projects/${projectId.value}/terms/${id}/delete` })
+    await requestDeleteTerm(projectId.value, id)
 
     // 后端真正删除成功后，更新视图
-    terms.value = terms.value.filter(t => Number(t.id) !== Number(id))
+    selectedTermIds.value = selectedTermIds.value.filter(value => value !== String(id))
+    selectedTermCache.value.delete(String(id))
+    stagedChangeOriginals.value.delete(String(id))
+    await loadTerms()
     toast.success('删除成功')
   }
-  catch (e: any) {
-    toast.error('删除失败', { description: e.message })
+  catch (e: unknown) {
+    toast.error('删除失败', { description: errorMessage(e) })
     loadTerms()
   }
 }
@@ -1445,6 +1368,8 @@ function removeBatchCreateRow(clientId: string) {
 }
 
 async function submitBatchCreate() {
+  if (isBatchCreatingTerms.value)
+    return
   if (!can('term.create'))
     return
   if (!projectId.value || batchCreateRows.value.length === 0 || batchRowErrors.value.size > 0)
@@ -1453,8 +1378,8 @@ async function submitBatchCreate() {
   isBatchCreatingTerms.value = true
   batchAddError.value = ''
   try {
-    const res = await api.post<any>({
-      url: `/projects/${projectId.value}/terms/batch-create`,
+    const res = await batchCreateTerms<BatchCreateResult>(projectId.value, {
+
       data: {
         terms: batchCreateRows.value.map(row => ({
           clientId: row.clientId,
@@ -1468,7 +1393,7 @@ async function submitBatchCreate() {
       },
     })
 
-    const createdIds = (res.data?.terms || []).map((item: any) => String(item.term?.id)).filter(Boolean)
+    const createdIds = (res.data?.terms || []).map(item => item.term ? String(item.term.id) : '').filter(Boolean)
     recentlyCreatedTermIds.value = createdIds
     currentPage.value = 1
     await loadTerms()
@@ -1481,8 +1406,8 @@ async function submitBatchCreate() {
       recentlyCreatedTermIds.value = []
     }, 5000)
   }
-  catch (error: any) {
-    batchAddError.value = error.message || '批量创建失败，请检查后重试。'
+  catch (error: unknown) {
+    batchAddError.value = errorMessage(error) || '批量创建失败，请检查后重试。'
   }
   finally {
     isBatchCreatingTerms.value = false
@@ -1498,9 +1423,11 @@ const isExportingExcel = ref(false)
 const copyingLanguageCode = ref('')
 const isDrawerOpen = ref(false)
 const activeDrawerTerm = ref<TermItem | null>(null)
+const drawerError = ref('')
 const presentDeletingId = ref<string | null>(null)
 
 function openDrawer(term: TermItem) {
+  drawerError.value = ''
   // 深拷贝，防止修改立刻反应到外部表格，直到真正保存
   activeDrawerTerm.value = JSON.parse(JSON.stringify(term))
   isDrawerOpen.value = true
@@ -1548,27 +1475,23 @@ function triggerDrawerSave() {
 }
 function confirmDrawerSave() {
   showDrawerSaveConfirmModal.value = false
-  if (activeDrawerTerm.value) {
-    activeDrawerTerm.value.status = 'review'
-  }
   saveDrawer()
 }
 
 async function saveDrawer() {
+  if (savingDrawer.value)
+    return
   if (!can('term.edit'))
     return
   if (!activeDrawerTerm.value)
     return
   savingDrawer.value = true
+  drawerError.value = ''
   try {
-    await api.post({
-      url: `/projects/${projectId.value}/terms/${activeDrawerTerm.value.id}/update`,
+    await updateTerm(projectId.value, activeDrawerTerm.value.id, {
+
       data: {
-        module: activeDrawerTerm.value.module,
-        key: activeDrawerTerm.value.key,
-        description: activeDrawerTerm.value.description,
-        status: activeDrawerTerm.value.status,
-        translations: activeDrawerTerm.value.translations,
+        ...termUpdatePayload(activeDrawerTerm.value),
       },
     })
     toast.success('更新成功', { description: '词条详情已保存。' })
@@ -1576,8 +1499,9 @@ async function saveDrawer() {
     activeDrawerTerm.value = null
     loadTerms()
   }
-  catch (e: any) {
-    toast.error('保存失败', { description: e.message })
+  catch (e: unknown) {
+    drawerError.value = errorMessage(e, '更新失败')
+    toast.error('保存失败', { description: errorMessage(e) })
   }
   finally {
     savingDrawer.value = false
@@ -1589,6 +1513,8 @@ function getMissingTranslationLanguages(term: TermItem) {
 }
 
 async function approveDrawerReview() {
+  if (approvingReview.value)
+    return
   if (!can('term.review'))
     return
   if (!activeDrawerTerm.value)
@@ -1616,16 +1542,13 @@ async function approveDrawerReview() {
   }
 
   approvingReview.value = true
+  drawerError.value = ''
   try {
-    activeDrawerTerm.value.status = 'review'
-    await api.post({
-      url: `/projects/${projectId.value}/terms/${activeDrawerTerm.value.id}/update`,
+    await updateTerm(projectId.value, activeDrawerTerm.value.id, {
+
       data: {
-        module: activeDrawerTerm.value.module,
-        key: activeDrawerTerm.value.key,
-        description: activeDrawerTerm.value.description,
-        status: activeDrawerTerm.value.status,
-        translations: activeDrawerTerm.value.translations,
+        ...termUpdatePayload(activeDrawerTerm.value),
+        status: 'review',
       },
     })
     toast.success('校对通过', { description: '词条已进入待发布状态。' })
@@ -1633,8 +1556,9 @@ async function approveDrawerReview() {
     activeDrawerTerm.value = null
     loadTerms()
   }
-  catch (e: any) {
-    toast.error('校对失败', { description: e.message })
+  catch (e: unknown) {
+    drawerError.value = errorMessage(e, '校对失败')
+    toast.error('校对失败', { description: errorMessage(e) })
   }
   finally {
     approvingReview.value = false
@@ -1651,6 +1575,8 @@ function confirmDrawerPublish() {
 }
 
 async function publishTerm() {
+  if (publishingTerm.value)
+    return
   if (!can('term.publish'))
     return
   if (!activeDrawerTerm.value)
@@ -1664,15 +1590,17 @@ async function publishTerm() {
   }
 
   publishingTerm.value = true
+  drawerError.value = ''
   try {
-    await api.post({ url: `/projects/${projectId.value}/terms/${activeDrawerTerm.value.id}/publish` })
+    await requestPublishTerm(projectId.value, activeDrawerTerm.value.id)
     toast.success('已发布', { description: '词条状态已更新为已发布。' })
     isDrawerOpen.value = false
     activeDrawerTerm.value = null
     loadTerms()
   }
-  catch (e: any) {
-    toast.error('发布失败', { description: e.message })
+  catch (e: unknown) {
+    drawerError.value = errorMessage(e, '发布失败')
+    toast.error('发布失败', { description: errorMessage(e) })
   }
   finally {
     publishingTerm.value = false
@@ -1681,485 +1609,53 @@ async function publishTerm() {
 
 const translatingDrawer = ref(false)
 async function translateDrawerTerm() {
-  if (!can('term.translate'))
+  const term = activeDrawerTerm.value
+  if (!can('term.translate') || !term || translatingDrawer.value)
     return
-  if (!activeDrawerTerm.value || !activeDrawerTerm.value.key) {
-    toast.warning('缺少关键信息', { description: '请先填写 Key 再翻译' })
-    return
-  }
-
-  // 检测是否有参考内容（正文或描述）
-  const hasReference = Object.values(activeDrawerTerm.value.translations).some(v => v && v.trim()) || activeDrawerTerm.value.description?.trim()
-  if (!hasReference) {
-    toast.warning('无法翻译', { description: '该词条目前只有 Key，缺乏任何参考内容。请至少填写一个语种的正文（如：中文）或上下文描述，AI 才能开始工作。' })
+  if (!term.key || !(Object.values(term.translations).some(text => text.trim()) || term.description?.trim())) {
+    toast.warning('无法翻译', { description: '请填写 Key 和至少一种参考译文或描述。' })
     return
   }
-
+  const ticket = requestScope.capture()
+  const languages = targetLanguages.value.map(lang => lang.code)
   translatingDrawer.value = true
-
   try {
-    const prompt = `你是一个专业的本地化翻译助手。
-将下面的词条翻译为纯JSON格式，Key为语言简码，Value为翻译结果：
-目标语言代码：
-${targetLanguages.value.map(l => `- ${l.code}: ${l.name}`).join('\n')}
-
-待翻译词条：
-Key: ${activeDrawerTerm.value.key}
-描述: ${activeDrawerTerm.value.description || '无'}
-现有参考:
-${JSON.stringify(activeDrawerTerm.value.translations)}
-`
-    const { translations: translatedData } = await requestAITranslation({
-      prompt,
-      targetLanguages: targetLanguages.value.map(lang => lang.code),
-      placeholderRule: placeholderInstructionForTerm(activeDrawerTerm.value),
+    const outcome = await translationService.translate(term, {
+      template: globalPrompt.value,
+      languages,
+      placeholderRule: placeholderInstructionForTerm(term),
+      isActive: () => activeDrawerTerm.value === term,
     })
-    targetLanguages.value.forEach((lang) => {
-      if (translatedData[lang.code] !== undefined) {
-        activeDrawerTerm.value!.translations[lang.code] = translatedData[lang.code]
-      }
-    })
-
-    const placeholderIssues = getTermPlaceholderIssues(activeDrawerTerm.value)
-    if (placeholderIssues.length > 0) {
-      toast.warning('AI 翻译完成，但占位符需要复核', {
-        description: placeholderIssues.map(item => item.lang.name).join('、'),
-      })
-    }
-
-    if (activeDrawerTerm.value!.status === 'published') {
-      activeDrawerTerm.value!.status = 'review'
-    }
-    else if (activeDrawerTerm.value!.status === 'draft') {
-      activeDrawerTerm.value!.status = 'pending'
-    }
-
-    toast.success('AI 翻译完成 (未保存)', { description: '请复核后点击保存。' })
+    if (outcome !== 'success')
+      return
+    const issues = getTermPlaceholderIssues(term)
+    if (issues.length)
+      toast.warning('AI 翻译完成，但占位符需要复核', { description: issues.map(item => item.lang.name).join('、') })
+    toast.success('AI 翻译完成，尚未保存', { description: '请复核后点击保存。' })
   }
-  catch (error: unknown) {
-    console.error('Drawer AI translation error', error)
-    toast.error('AI 翻译失败', { description: error instanceof Error ? error.message : '请求翻译服务失败，请稍后重试。' })
+  catch (error) {
+    if (ticket.isCurrent())
+      toast.error('AI 翻译失败', { description: errorMessage(error) })
   }
-  finally {
-    translatingDrawer.value = false
-  }
+  finally { translatingDrawer.value = false }
 }
 
 function triggerBatchPublish() {
   requestBulkAction('publish')
 }
 
-function closeDrawer() {
+async function closeDrawer() {
+  if (showDiscardDialog.value)
+    return
+  if (savingDrawer.value || approvingReview.value || publishingTerm.value)
+    return
+  if (isDrawerDirty.value && !(await confirmDiscard()))
+    return
   isDrawerOpen.value = false
   activeDrawerTerm.value = null
 }
 
-const excelFileInput = ref<HTMLInputElement | null>(null)
-const jsonFileInput = ref<HTMLInputElement | null>(null)
-const importingExcel = ref(false)
-const excelImportStage = ref('')
-
-interface JsonImportItem {
-  module: string
-  key: string
-  content: string
-}
-
-function triggerExcelImport() {
-  if (importingExcel.value)
-    return
-  excelFileInput.value?.click()
-}
-
-function triggerJsonImport() {
-  jsonFileInput.value?.click()
-}
-
-const importingJson = ref(false)
-const showObjectImportModal = ref(false)
-const objectImportText = ref('')
-const objectImportLangCode = ref('')
-const importingObjectJson = ref(false)
-
-function isPrimitiveImportValue(value: unknown) {
-  return ['string', 'number', 'boolean'].includes(typeof value)
-}
-
-function flattenObjectImport(data: Record<string, unknown>) {
-  const items: JsonImportItem[] = []
-
-  function visit(value: unknown, path: string[], module = '') {
-    if (isPrimitiveImportValue(value)) {
-      const key = path.join('.')
-      if (key) {
-        items.push({ module, key, content: String(value) })
-      }
-      return
-    }
-
-    if (!value || Array.isArray(value) || typeof value !== 'object')
-      return
-
-    Object.entries(value as Record<string, unknown>).forEach(([childKey, childValue]) => {
-      visit(childValue, [...path, childKey], module)
-    })
-  }
-
-  Object.entries(data).forEach(([topLevelKey, value]) => {
-    if (isPrimitiveImportValue(value)) {
-      items.push({ module: '', key: topLevelKey, content: String(value) })
-      return
-    }
-
-    if (value && !Array.isArray(value) && typeof value === 'object') {
-      Object.entries(value as Record<string, unknown>).forEach(([childKey, childValue]) => {
-        visit(childValue, [childKey], topLevelKey)
-      })
-    }
-  })
-
-  return items
-}
-
-function normalizeJsonImport(data: unknown, mode: 'flat' | 'object') {
-  if (!data || Array.isArray(data) || typeof data !== 'object') {
-    throw new Error(mode === 'object' ? '格式错误，需为对象 JSON' : '格式错误，需为 { key: value } 对象')
-  }
-
-  const objectData = data as Record<string, unknown>
-  if (mode === 'object') {
-    return flattenObjectImport(objectData)
-  }
-
-  return Object.entries(objectData).map(([key, value]) => {
-    if (!isPrimitiveImportValue(value)) {
-      throw new Error('扁平模式只支持 { key: value }，对象结构请使用“导入对象 JSON”')
-    }
-    return { module: '', key, content: String(value) }
-  })
-}
-
-function parsePastedObject(input: string) {
-  try {
-    return JSON.parse(input)
-  }
-  catch {
-    return new Function(`"use strict"; return (${input});`)()
-  }
-}
-
-function openObjectImportModal() {
-  objectImportLangCode.value = sourceLanguageCode.value || targetLanguages.value[0]?.code || ''
-  objectImportText.value = ''
-  showObjectImportModal.value = true
-}
-
-async function submitObjectImport() {
-  if (!can('term.import'))
-    return
-  if (!objectImportLangCode.value) {
-    toast.warning('请选择导入语言')
-    return
-  }
-  if (!objectImportText.value.trim()) {
-    toast.warning('请先粘贴对象 JSON')
-    return
-  }
-
-  importingObjectJson.value = true
-  try {
-    const parsed = parsePastedObject(objectImportText.value)
-    const items = normalizeJsonImport(parsed, 'object')
-    if (items.length === 0) {
-      toast.warning('未找到可导入的文本内容')
-      return
-    }
-
-    const res = await api.post<any>({
-      url: `/projects/${projectId.value}/terms/import-json`,
-      data: {
-        language_code: objectImportLangCode.value,
-        items,
-      },
-    })
-
-    if (res.code === 200) {
-      toast.success('对象 JSON 导入成功', {
-        description: `新建词条：${res.data.created} 个，更新翻译：${res.data.updated} 条`,
-      })
-      showObjectImportModal.value = false
-      objectImportText.value = ''
-      loadTerms()
-    }
-    else {
-      toast.error('导入失败', { description: res.message })
-    }
-  }
-  catch (e: any) {
-    toast.error('导入失败', { description: e.message })
-  }
-  finally {
-    importingObjectJson.value = false
-  }
-}
-
-async function handleJsonImport(event: Event) {
-  if (!can('term.import'))
-    return
-  const target = event.target as HTMLInputElement
-  const files = target.files
-  if (!files || files.length === 0)
-    return
-
-  const validCodes = availableLanguages.value.map(lang => lang.code)
-  const projectCodes = targetLanguages.value.map(l => l.code)
-  importingJson.value = true
-
-  let totalCreated = 0
-  let totalUpdated = 0
-  const errors: string[] = []
-
-  for (const file of Array.from(files)) {
-    const langCode = file.name.replace(/\.json$/i, '').toLowerCase()
-
-    // Tier 1: not a known language code at all — filename is wrong
-    if (!langCode || !validCodes.includes(langCode)) {
-      errors.push(`「${file.name}」文件名无法识别为语言代码，跳过`)
-      continue
-    }
-
-    // Tier 2: valid code but not configured in this project — prompt user to add it
-    if (!projectCodes.includes(langCode)) {
-      const langName = availableLanguages.value.find(lang => lang.code === langCode)?.name ?? langCode
-      errors.push(`「${file.name}」[${langName}] 未在本项目中配置，请先到项目设置中添加该语言，跳过`)
-      continue
-    }
-
-    try {
-      const text = await file.text()
-      const data = JSON.parse(text)
-      const items = normalizeJsonImport(data, 'flat')
-      const res = await api.post<any>({
-        url: `/projects/${projectId.value}/terms/import-json`,
-        data: { language_code: langCode, items },
-      })
-      if (res.code === 200) {
-        totalCreated += res.data.created
-        totalUpdated += res.data.updated
-      }
-      else {
-        errors.push(`「${file.name}」：${res.message}`)
-      }
-    }
-    catch (e: any) {
-      errors.push(`「${file.name}」：${e.message}`)
-    }
-  }
-
-  if (errors.length > 0) {
-    toast.warning(`导入完成（含 ${errors.length} 个错误）`, {
-      description: errors.join('\n'),
-    })
-  }
-  else {
-    toast.success(`全部导入成功（${files.length} 个文件）`, {
-      description: `新建词条：${totalCreated} 个，更新翻译：${totalUpdated} 条`,
-    })
-  }
-
-  loadTerms()
-  importingJson.value = false
-  if (target)
-    target.value = ''
-}
-
-async function handleExcelImport(event: Event) {
-  if (!can('term.import'))
-    return
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
-  if (!file)
-    return
-
-  importingExcel.value = true
-  excelImportStage.value = '正在读取文件'
-  const importToastId = toast.loading('正在导入 Excel', {
-    description: `正在读取「${file.name}」，请勿关闭页面。`,
-    duration: Infinity,
-  })
-
-  try {
-    // Let Vue paint the loading state before XLSX performs synchronous parsing.
-    await nextTick()
-    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
-
-    const data = await file.arrayBuffer()
-    excelImportStage.value = '正在解析并校验'
-    toast.loading('正在导入 Excel', {
-      id: importToastId,
-      description: `正在解析并校验「${file.name}」。`,
-      duration: Infinity,
-    })
-    await nextTick()
-    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
-
-    const workbook = XLSX.read(data)
-    const firstSheetName = workbook.SheetNames[0]
-    if (!firstSheetName) {
-      throw new Error('无法读取 Excel 的工作表。')
-    }
-    const worksheet = workbook.Sheets[firstSheetName]
-    if (!worksheet) {
-      throw new Error('找不到该工作表。')
-    }
-
-    // Parse as 2D array
-    const json: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
-
-    if (json.length < 2) {
-      throw new Error('未检测到有效数据或语言标识头。')
-    }
-
-    const header = json[0] || []
-    const keyHeader = typeof header[0] === 'string' ? header[0].trim().toLowerCase() : ''
-    if (keyHeader !== 'key') {
-      throw new Error('第一列的表头必须是 key。')
-    }
-
-    // Filter only columns where the header matches an existing language code
-    const langIdxMap = new Map<number, string>()
-    header.forEach((col: string, idx: number) => {
-      if (idx > 0 && col && typeof col === 'string') {
-        const code = col.trim().toLowerCase()
-        const matchedLanguage = targetLanguages.value.find(lang => lang.code.toLowerCase() === code)
-        if (matchedLanguage) {
-          langIdxMap.set(idx, matchedLanguage.code)
-        }
-      }
-    })
-
-    if (langIdxMap.size === 0) {
-      throw new Error('第一行无法识别任何支持的语言代码（如 cn、en）。')
-    }
-
-    const rowsToImport: Array<{
-      clientId: string
-      key: string
-      module: string
-      description: string
-      translations: Translation
-    }> = []
-    const validationErrors: string[] = []
-    const importedKeys = new Set<string>()
-    const existingKeys = new Set(
-      terms.value
-        .filter(term => !term.module.trim())
-        .map(term => term.key.trim()),
-    )
-
-    // Loop through remaining rows and validate before sending anything to the server
-    for (let i = 1; i < json.length; i++) {
-      const row = json[i]
-      if (!row || row.length === 0)
-        continue
-
-      const rowNumber = i + 1
-      const key = row[0] === undefined || row[0] === null ? '' : String(row[0]).trim()
-      const hasContent = Array.from(langIdxMap.keys()).some(idx => row[idx] && String(row[idx]).trim() !== '')
-      if (!key && !hasContent)
-        continue
-      if (!key) {
-        validationErrors.push(`第 ${rowNumber} 行：key 不能为空`)
-        continue
-      }
-      if (Array.from(key).length > 255) {
-        validationErrors.push(`第 ${rowNumber} 行：key 不能超过 255 个字符`)
-        continue
-      }
-      if (!hasContent) {
-        validationErrors.push(`第 ${rowNumber} 行：至少填写一种语言内容`)
-        continue
-      }
-      if (importedKeys.has(key)) {
-        validationErrors.push(`第 ${rowNumber} 行：key「${key}」在表格中重复`)
-        continue
-      }
-      if (existingKeys.has(key)) {
-        validationErrors.push(`第 ${rowNumber} 行：当前项目已存在 key「${key}」`)
-        continue
-      }
-
-      const translations = targetLanguages.value.reduce((acc, lang) => {
-        acc[lang.code] = ''
-        return acc
-      }, {} as Translation)
-
-      langIdxMap.forEach((langCode, idx) => {
-        if (row[idx] !== undefined && row[idx] !== null) {
-          translations[langCode] = String(row[idx]).trim()
-        }
-      })
-
-      importedKeys.add(key)
-      rowsToImport.push({
-        clientId: `excel-row-${rowNumber}`,
-        module: '',
-        key,
-        description: '',
-        translations,
-      })
-    }
-
-    if (validationErrors.length > 0) {
-      const visibleErrors = validationErrors.slice(0, 5)
-      const remainingCount = validationErrors.length - visibleErrors.length
-      throw new Error(`${visibleErrors.join('；')}${remainingCount > 0 ? `；另有 ${remainingCount} 个错误` : ''}`)
-    }
-
-    if (rowsToImport.length === 0) {
-      throw new Error('未检测到可导入的数据。')
-    }
-
-    if (rowsToImport.length > BATCH_CREATE_LIMIT) {
-      throw new Error(`单次最多导入 ${BATCH_CREATE_LIMIT} 条，当前共 ${rowsToImport.length} 条。`)
-    }
-
-    excelImportStage.value = `正在导入 ${rowsToImport.length} 条词条`
-    toast.loading('正在导入 Excel', {
-      id: importToastId,
-      description: `文件校验通过，正在创建 ${rowsToImport.length} 个词条。`,
-      duration: Infinity,
-    })
-    const res = await api.post<any>({
-      url: `/projects/${projectId.value}/terms/batch-create`,
-      data: { terms: rowsToImport },
-    })
-    if (res.code !== 200) {
-      throw new Error(res.message || '服务器未能完成 Excel 导入')
-    }
-
-    excelImportStage.value = '正在刷新词条列表'
-    await loadTerms()
-    toast.success('导入成功', {
-      id: importToastId,
-      description: `已从 Excel 创建 ${res.data?.createdCount ?? rowsToImport.length} 个词条。`,
-    })
-  }
-  catch (error: any) {
-    console.error(error)
-    toast.error('导入失败', {
-      id: importToastId,
-      description: error.message || 'Excel 解析出现异常。',
-    })
-  }
-  finally {
-    importingExcel.value = false
-    excelImportStage.value = ''
-    // Reset file input so same file can be imported again if needed
-    if (target)
-      target.value = ''
-  }
-}
+const { bindExcelFileInput, bindJsonFileInput, importingExcel, excelImportStage, triggerExcelImport, triggerJsonImport, importingJson, showObjectImportModal, objectImportText, objectImportLangCode, importingObjectJson, openObjectImportModal, submitObjectImport, handleJsonImport, handleExcelImport } = useTermImport({ projectId, targetLanguages, availableLanguages, sourceLanguageCode, terms, can, loadTerms, BATCH_CREATE_LIMIT })
 
 // Side drawer functions already defined above
 
@@ -2173,8 +1669,8 @@ async function copyLangJson(langCode: string, langName: string) {
     return
   copyingLanguageCode.value = langCode
   try {
-    const response = await api.post<{ content: string, count: number }>({
-      url: `/projects/${projectId.value}/terms/export/copy`,
+    const response = await copyTermExport<{ content: string, count: number }>(projectId.value, {
+
       data: {
         scope: getDataScope(),
         language: langCode,
@@ -2206,9 +1702,9 @@ async function copyLangJson(langCode: string, langName: string) {
       description: `已复制【${langName}】的 ${response.data.count} 条词条 JSON。`,
     })
   }
-  catch (error: any) {
+  catch (error: unknown) {
     toast.error('复制失败', {
-      description: error.message || '写入剪贴板失败，请检查浏览器权限。',
+      description: errorMessage(error) || '写入剪贴板失败，请检查浏览器权限。',
     })
   }
   finally {
@@ -2227,27 +1723,11 @@ function closeExportModal() {
   showExportModal.value = false
 }
 
-function toggleExportLang(code: string) {
-  const index = selectedExportLangs.value.indexOf(code)
-  if (index > -1) {
-    selectedExportLangs.value.splice(index, 1)
-  }
-  else {
-    selectedExportLangs.value.push(code)
-  }
-}
-
-function selectAllExportLangs() {
-  selectedExportLangs.value = targetLanguages.value.map(lang => lang.code)
-}
-
-function deselectAllExportLangs() {
-  selectedExportLangs.value = []
-}
-
 function getJsonArchiveName() {
   const projectName = String(currentProject.value?.name || 'translations')
     .trim()
+    // File names cannot contain control characters.
+    // eslint-disable-next-line no-control-regex
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
     .replace(/[.\s]+$/g, '')
     .slice(0, 80) || 'translations'
@@ -2276,8 +1756,8 @@ async function confirmExport() {
 
   isExportingJson.value = true
   try {
-    const result = await api.downloadPost({
-      url: `/projects/${projectId.value}/terms/export/json`,
+    const result = await downloadTermsJson(projectId.value, {
+
       data: {
         scope: getDataScope(),
         languages: selectedExportLangs.value,
@@ -2290,9 +1770,9 @@ async function confirmExport() {
     })
     closeExportModal()
   }
-  catch (error: any) {
+  catch (error: unknown) {
     console.error('Export JSON ZIP Error:', error)
-    toast.error('导出失败', { description: error?.message || 'ZIP 文件生成失败，请重试。' })
+    toast.error('导出失败', { description: errorMessage(error, 'ZIP 文件生成失败，请重试。') })
   }
   finally {
     isExportingJson.value = false
@@ -2306,19 +1786,63 @@ async function exportToExcel() {
     return
   isExportingExcel.value = true
   try {
-    const result = await api.downloadPost({
-      url: `/projects/${projectId.value}/terms/export/excel`,
+    const result = await downloadTermsExcel(projectId.value, {
+
       data: { scope: getDataScope() },
     })
     downloadBlob(result.blob, `translations_export_${new Date().toISOString().slice(0, 10)}.xlsx`)
     toast.success('导出成功', { description: 'Excel 文件已由服务端生成。' })
   }
-  catch (error: any) {
-    toast.error('导出失败', { description: error.message || 'Excel 文件生成失败。' })
+  catch (error: unknown) {
+    toast.error('导出失败', { description: errorMessage(error) || 'Excel 文件生成失败。' })
   }
   finally {
     isExportingExcel.value = false
   }
+}
+
+const hasUnsavedChanges = computed(() => isDrawerDirty.value || isGlobalEditing.value || stagedChangeOriginals.value.size > 0)
+const { showDiscardDialog, confirmDiscard, resolveDiscard } = useDiscardConfirmation(() => hasUnsavedChanges.value)
+const operationInProgress = computed(() => isSavingBatch.value || savingDrawer.value || approvingReview.value || publishingTerm.value
+  || isBatchTranslating.value || translatingTerms.value.size > 0 || translatingDrawer.value || submittingTerm.value
+  || isBulkExecuting.value || isBulkPreviewing.value || importingExcel.value || importingJson.value || importingObjectJson.value
+  || isBatchCreatingTerms.value || isSavingPrompt.value || publishingLocaleRelease.value || isExportingJson.value || isExportingExcel.value || persistingStaged.value)
+async function canLeaveWorkbench() {
+  if (operationInProgress.value) {
+    toast.info('操作正在进行', { description: '请等待当前操作完成后再切换项目或页面。' })
+    return false
+  }
+  return confirmDiscard()
+}
+onBeforeRouteLeave(canLeaveWorkbench)
+onBeforeRouteUpdate(async (to, from) => to.query.project === from.query.project || await canLeaveWorkbench())
+onScopeDispose(() => window.clearTimeout(termsReloadTimer))
+function resetProjectState() {
+  window.clearTimeout(termsReloadTimer)
+  terms.value = []
+  targetLanguages.value = []
+  globalPrompt.value = DEFAULT_TRANSLATION_PROMPT
+  clearSelectedTerms()
+  stagedChangeOriginals.value.clear()
+  isGlobalEditing.value = false
+  originalTermsJson.value = ''
+  activeDrawerTerm.value = null
+  isDrawerOpen.value = false
+  showDrawerSaveConfirmModal.value = false
+  showDrawerPublishConfirmModal.value = false
+  showSettingsModal.value = false
+  pendingBatchTranslate.value = false
+  showBulkConfirmDialog.value = false
+  pendingBulkOperation.value = null
+  pendingBulkScope.value = null
+  bulkPreview.value = null
+  showAddTermModal.value = false
+  showBatchAddModal.value = false
+  showObjectImportModal.value = false
+  showExportModal.value = false
+  totalTerms.value = 0
+  totalPages.value = 1
+  modules.value = []
 }
 </script>
 
@@ -2378,14 +1902,14 @@ async function exportToExcel() {
 
         <div class="flex flex-wrap items-center gap-2 xl:justify-end">
           <input
-            ref="excelFileInput"
+            :ref="bindExcelFileInput"
             type="file"
             accept=".xlsx, .xls, .csv"
             class="hidden"
             @change="handleExcelImport"
           >
           <input
-            ref="jsonFileInput"
+            :ref="bindJsonFileInput"
             type="file"
             accept=".json"
             multiple
@@ -2501,8 +2025,8 @@ async function exportToExcel() {
           </UiDropdownMenu>
 
           <UiButton
-            v-permission="'term.edit'"
             v-if="!isGlobalEditing"
+            v-permission="'term.edit'"
             variant="secondary"
             class="rounded-xl border-primary/20 text-primary hover:bg-primary/5"
             @click="enterEditMode"
@@ -2579,7 +2103,7 @@ async function exportToExcel() {
           <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <UiInput
             id="term-search"
-            v-model="searchQuery"
+            v-model="searchQuery" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0"
             placeholder="搜索 Key 或模块"
             class="h-10 rounded-xl bg-background pl-9 pr-9"
           />
@@ -2591,7 +2115,7 @@ async function exportToExcel() {
           <label for="term-search-zh" class="sr-only">搜索中文译文</label>
           <UiInput
             id="term-search-zh"
-            v-model="chineseSearchQuery"
+            v-model="chineseSearchQuery" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0"
             placeholder="中文译文"
             class="h-10 rounded-xl bg-background pr-9"
           />
@@ -2603,7 +2127,7 @@ async function exportToExcel() {
           <label for="term-search-en" class="sr-only">搜索英文译文</label>
           <UiInput
             id="term-search-en"
-            v-model="englishSearchQuery"
+            v-model="englishSearchQuery" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0"
             placeholder="英文译文"
             class="h-10 rounded-xl bg-background pr-9"
           />
@@ -2612,7 +2136,7 @@ async function exportToExcel() {
           </button>
         </div>
 
-        <UiSelect v-model="selectedModule" class="lg:col-span-2">
+        <UiSelect v-model="selectedModule" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0" class="lg:col-span-2">
           <UiSelectTrigger aria-label="按模块筛选" class="h-10 w-full rounded-xl bg-background lg:col-span-2">
             <UiSelectValue placeholder="选择模块" />
           </UiSelectTrigger>
@@ -2626,7 +2150,7 @@ async function exportToExcel() {
           </UiSelectContent>
         </UiSelect>
 
-        <UiSelect v-model="selectedStatus">
+        <UiSelect v-model="selectedStatus" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0">
           <UiSelectTrigger aria-label="按状态筛选" class="h-10 w-full rounded-xl bg-background lg:col-span-2">
             <UiSelectValue placeholder="选择状态" />
           </UiSelectTrigger>
@@ -2765,7 +2289,7 @@ async function exportToExcel() {
             <span v-if="hasActiveFilters">筛选后显示 {{ totalTerms }} / {{ projectSummary.total }} 条词条</span>
             <span v-else>勾选词条后可进行批量翻译、校对、发布或删除</span>
           </div>
-          <UiButton v-if="hasActiveFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="clearAllFilters">
+          <UiButton v-if="hasActiveFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0" @click="clearAllFilters">
             <X class="mr-1 size-3.5" />
             清除全部筛选
           </UiButton>
@@ -3137,7 +2661,7 @@ async function exportToExcel() {
                     <Plus class="size-3.5 mr-1.5" />
                     新建词条
                   </UiButton>
-                  <UiButton v-else-if="hasActiveFilters" variant="outline" size="sm" class="mt-2" @click="clearAllFilters">
+                  <UiButton v-else-if="hasActiveFilters" variant="outline" size="sm" class="mt-2" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0" @click="clearAllFilters">
                     <X class="mr-1.5 size-3.5" />
                     清除全部筛选
                   </UiButton>
@@ -3162,7 +2686,7 @@ async function exportToExcel() {
         <div class="flex items-center gap-4">
           <div class="flex items-center gap-2">
             <span class="text-xs text-muted-foreground">每页</span>
-            <UiSelect :model-value="String(pageSize)" @update:model-value="value => pageSize = Number(value)">
+            <UiSelect :disabled="isGlobalEditing || stagedChangeOriginals.size > 0" :model-value="String(pageSize)" @update:model-value="value => pageSize = Number(value)">
               <UiSelectTrigger class="h-8 w-[76px]">
                 <UiSelectValue :placeholder="String(pageSize)" />
               </UiSelectTrigger>
@@ -3179,16 +2703,16 @@ async function exportToExcel() {
           </div>
 
           <div class="flex items-center gap-1">
-            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="第一页" :disabled="currentPage === 1" @click="goToFirstPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="第一页" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0 || currentPage === 1" @click="goToFirstPage">
               <ChevronsLeft class="h-4 w-4" />
             </UiButton>
-            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="上一页" :disabled="currentPage === 1" @click="goToPreviousPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="上一页" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0 || currentPage === 1" @click="goToPreviousPage">
               <ChevronLeft class="h-4 w-4" />
             </UiButton>
-            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="下一页" :disabled="currentPage === totalPages" @click="goToNextPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="下一页" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0 || currentPage === totalPages" @click="goToNextPage">
               <ChevronRight class="h-4 w-4" />
             </UiButton>
-            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="最后一页" :disabled="currentPage === totalPages" @click="goToLastPage">
+            <UiButton variant="outline" size="icon" class="h-8 w-8" aria-label="最后一页" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0 || currentPage === totalPages" @click="goToLastPage">
               <ChevronsRight class="h-4 w-4" />
             </UiButton>
           </div>
@@ -3391,187 +2915,26 @@ async function exportToExcel() {
       </UiDialogContent>
     </UiDialog>
 
-    <!-- 侧边栏详情抽屉 (Drawer) -->
-    <UiSheet :open="isDrawerOpen" @update:open="val => { if (!val) closeDrawer() }">
-      <UiSheetContent class="w-[500px] sm:max-w-[500px] p-0 flex flex-col border-l dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-        <div v-if="activeDrawerTerm" class="flex flex-col h-full overflow-hidden">
-          <!-- Drawer Header -->
-          <UiSheetHeader class="px-6 py-4 border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-950/50 space-y-0 text-left">
-            <div class="flex justify-between items-center w-full min-w-0 pr-6 pl-1">
-              <UiSheetTitle class="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 w-full min-w-0 pr-4">
-                <UiInput
-                  v-model="activeDrawerTerm.module"
-                  class="h-8 w-24 text-sm font-mono text-primary bg-transparent border-transparent hover:border-gray-200 focus-visible:ring-1 focus-visible:border-gray-200 shrink-0 px-1 disabled:opacity-80 disabled:bg-transparent disabled:border-transparent disabled:cursor-not-allowed"
-                  placeholder="模块"
-                  :disabled="isDrawerTermPublished || !can('term.structure')"
-                />
-                <span class="text-gray-400 font-bold shrink-0">.</span>
-                <UiInput
-                  v-model="activeDrawerTerm.key"
-                  class="h-8 flex-1 text-sm font-bold bg-transparent border-transparent hover:border-gray-200 focus-visible:ring-1 focus-visible:border-gray-200 px-1 disabled:opacity-100 disabled:bg-transparent disabled:border-transparent disabled:cursor-not-allowed"
-                  placeholder="Key (必填)"
-                  :disabled="isDrawerTermPublished || !can('term.structure')"
-                  @update:model-value="handleKeyUpdate(activeDrawerTerm)"
-                />
-              </UiSheetTitle>
-              <div
-                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium shadow-sm shrink-0"
-                :class="[
-                  activeDrawerTerm?.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200'
-                  : activeDrawerTerm?.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200'
-                    : activeDrawerTerm?.status === 'review' ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                      : 'bg-emerald-50 text-emerald-700 border-emerald-200',
-                ]"
-              >
-                <span class="w-1.5 h-1.5 rounded-full" :class="getStatusColor(activeDrawerTerm?.status || '')" />
-                {{ statusOptions.find(o => o.value === activeDrawerTerm?.status)?.label || activeDrawerTerm?.status }}
-              </div>
-            </div>
-            <UiSheetDescription class="hidden">
-              详情
-            </UiSheetDescription>
-          </UiSheetHeader>
-
-          <div class="flex-1 min-h-0">
-            <UiScrollArea class="h-full w-full block">
-              <div class="p-6 space-y-8">
-                <!-- Section: Context & Description -->
-                <div class="space-y-4">
-                  <div class="space-y-2">
-                    <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      上下文描述
-                    </h3>
-                    <UiTextarea
-                      v-model="activeDrawerTerm.description"
-                      :disabled="isDrawerTermPublished || !can('term.description')"
-                      class="min-h-[80px] text-sm leading-relaxed"
-                      placeholder="添加详细的上下文描述，如出现位置、用途等..."
-                    />
-                  </div>
-                </div>
-
-                <hr class="border-gray-100 dark:border-zinc-800">
-
-                <!-- Section: All Translations form -->
-                <div class="space-y-4">
-                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                      多语言翻译
-                      <span class="text-xs font-normal text-gray-500">{{ targetLanguages.length }} 个语种</span>
-                    </div>
-                    <UiButton v-permission="'term.translate'" variant="outline" size="sm" class="h-7 text-xs px-2 cursor-pointer border-primary/20 hover:border-primary/50 text-primary/80" :disabled="translatingDrawer" @click="translateDrawerTerm">
-                      <Loader2 v-if="translatingDrawer" class="w-3 h-3 mr-1.5 animate-spin" />
-                      <Wand2 v-else class="w-3 h-3 mr-1.5" />
-                      AI 翻译当前
-                    </UiButton>
-                  </h3>
-                  <div class="grid grid-cols-1 gap-4">
-                    <div v-for="lang in targetLanguages" :key="lang.code" class="group">
-                      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 flex justify-between">
-                        <span>{{ lang.name }} <span class="uppercase text-gray-400 translate-y-px inline-block ml-1">({{ lang.code }})</span></span>
-                      </label>
-                      <UiTextarea
-                        v-model="activeDrawerTerm.translations[lang.code]"
-                        :disabled="!can('term.translate')"
-                        class="min-h-[44px]"
-                        :class="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
-                        :placeholder="`输入 ${lang.name} 翻译...`"
-                        @update:model-value="handleTranslationUpdate(activeDrawerTerm)"
-                      />
-                      <p v-if="hasTranslationPlaceholderMismatch(activeDrawerTerm, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
-                        <span v-if="getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.length">
-                          缺少 {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.join(', ') }}
-                        </span>
-                        <span v-if="getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).extra.length">
-                          {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).missing.length ? '，' : '' }}多出 {{ getTranslationPlaceholderDiff(activeDrawerTerm, lang.code).extra.join(', ') }}
-                        </span>
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <hr class="border-gray-100 dark:border-zinc-800">
-
-                <!-- Section: Meta / History -->
-                <div class="space-y-4 pb-4">
-                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    元数据与日志
-                  </h3>
-                  <div class="bg-gray-50 dark:bg-zinc-950 p-4 rounded-lg space-y-3 text-sm">
-                    <div class="flex items-center text-gray-500 dark:text-gray-400">
-                      <CalendarDays class="w-4 h-4 mr-2" />
-                      <span class="w-20">最后更新:</span>
-                      <span class="text-gray-900 dark:text-gray-100">{{ activeDrawerTerm.updatedAt || 'N/A' }}</span>
-                    </div>
-
-                    <div v-if="activeDrawerTerm.history && activeDrawerTerm.history.length > 0" class="mt-4 border-t border-gray-200 dark:border-zinc-800 pt-3">
-                      <p class="text-xs text-gray-500 mb-2">
-                        最近动态
-                      </p>
-                      <ul class="space-y-3 relative before:absolute before:inset-y-0 before:left-[5px] before:w-[2px] before:bg-gray-200 dark:before:bg-zinc-800">
-                        <li v-for="(log, idx) in activeDrawerTerm.history" :key="idx" class="relative pl-5">
-                          <span class="absolute left-0 top-1.5 w-3 h-3 bg-white dark:bg-zinc-950 border-[2px] border-primary rounded-full z-10" />
-                          <div class="flex flex-col text-xs space-y-0.5">
-                            <span class="text-gray-900 dark:text-gray-100 font-medium">{{ log.user }} <span class="text-gray-500 font-normal ml-1">{{ log.action }}</span></span>
-                            <span class="text-gray-400">{{ log.time }}</span>
-                          </div>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </UiScrollArea>
-          </div>
-
-          <!-- Drawer Footer -->
-          <UiSheetFooter class="p-6 border-t border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-950/50">
-            <div class="flex justify-between items-center w-full gap-3">
-              <UiButton variant="outline" class="flex-1" @click="closeDrawer">
-                取消
-              </UiButton>
-              <div class="flex gap-2 flex-1">
-                <UiButton
-                  v-permission="'term.review'"
-                  v-if="canApproveReviewInDrawer"
-                  variant="outline"
-                  class="flex-1 border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30"
-                  :disabled="savingDrawer || approvingReview"
-                  @click="approveDrawerReview"
-                >
-                  <Loader2 v-if="approvingReview" class="w-4 h-4 mr-2 animate-spin" />
-                  <CheckCircle2 v-else class="w-4 h-4 mr-2" />
-                  {{ isDrawerDirty ? '保存并校对通过' : '校对通过' }}
-                </UiButton>
-                <UiButton
-                  v-permission="'term.edit'"
-                  class="flex-1"
-                  :disabled="!isDrawerDirty || savingDrawer"
-                  @click="triggerDrawerSave"
-                >
-                  <Loader2 v-if="savingDrawer" class="w-4 h-4 mr-2 animate-spin" />
-                  <Save v-else class="w-4 h-4 mr-2" />
-                  保存修改
-                </UiButton>
-                <!-- Publish Button in Drawer -->
-                <UiButton
-                  v-permission="'term.publish'"
-                  v-if="canPublishInDrawer"
-                  variant="default"
-                  class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
-                  :disabled="savingDrawer || isDrawerDirty"
-                  @click="triggerDrawerPublish"
-                >
-                  <CheckCircle2 class="w-4 h-4 mr-2" />
-                  直接发布
-                </UiButton>
-              </div>
-            </div>
-          </UiSheetFooter>
-        </div>
-      </UiSheetContent>
-    </UiSheet>
-
+    <TermEditorSheet
+      v-model:term="activeDrawerTerm" :open="isDrawerOpen" :languages="targetLanguages"
+      :published="isDrawerTermPublished" :dirty="isDrawerDirty" :can-review="canApproveReviewInDrawer" :can-publish="canPublishInDrawer"
+      :confirming="showDiscardDialog" :error="drawerError" :saving="savingDrawer" :reviewing="approvingReview" :publishing="publishingTerm" :translating="translatingDrawer"
+      :can="can" :placeholder-diff="getTranslationPlaceholderDiff"
+      @close="closeDrawer" @key-update="handleKeyUpdate" @translation-update="handleTranslationUpdate"
+      @translate="translateDrawerTerm" @review="approveDrawerReview" @save="triggerDrawerSave" @publish="triggerDrawerPublish"
+    />
+    <UiAlertDialog :open="showDiscardDialog" @update:open="open => { if (!open) resolveDiscard(false) }">
+      <UiAlertDialogContent class="z-[100]">
+        <UiAlertDialogHeader><UiAlertDialogTitle>放弃未保存的修改？</UiAlertDialogTitle><UiAlertDialogDescription>当前草稿或 AI 翻译尚未保存。放弃后无法恢复。</UiAlertDialogDescription></UiAlertDialogHeader>
+        <UiAlertDialogFooter>
+          <UiAlertDialogCancel @click="resolveDiscard(false)">
+            继续编辑
+          </UiAlertDialogCancel><UiButton variant="destructive" @click="resolveDiscard(true)">
+            放弃修改
+          </UiButton>
+        </UiAlertDialogFooter>
+      </UiAlertDialogContent>
+    </UiAlertDialog>
     <!-- 服务端预检查后的统一批量操作确认 -->
     <UiAlertDialog :open="showBulkConfirmDialog" @update:open="handleBulkDialogOpen">
       <UiAlertDialogContent>
@@ -3702,13 +3065,13 @@ async function exportToExcel() {
               v-model="objectImportText"
               class="h-[320px] min-h-[320px] resize-none overflow-y-auto font-mono text-xs leading-relaxed"
               placeholder="{
-  common: {
-    confirm: '确认',
-    cancel: '取消'
+  &quot;common&quot;: {
+    &quot;confirm&quot;: &quot;确认&quot;,
+    &quot;cancel&quot;: &quot;取消&quot;
   },
-  auth: {
-    login: {
-      title: '登录'
+  &quot;auth&quot;: {
+    &quot;login&quot;: {
+      &quot;title&quot;: &quot;登录&quot;
     }
   }
 }"
@@ -3741,14 +3104,22 @@ async function exportToExcel() {
           <Loader2 class="size-4 animate-spin" /> 正在读取线上版本…
         </div>
         <div v-else class="space-y-3">
-          <p v-if="localeReleaseError" role="alert" class="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{{ localeReleaseError }}</p>
-          <p v-if="localeRelease" class="text-sm text-muted-foreground">当前版本 <strong class="font-mono text-foreground">v{{ localeRelease.version }}</strong> · {{ new Date(localeRelease.created_at).toLocaleString('zh-CN') }}</p>
-          <p v-else-if="!localeReleaseError" class="text-sm text-muted-foreground">尚未发布。首次发布后会生成公开链接。</p>
+          <p v-if="localeReleaseError" role="alert" class="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            {{ localeReleaseError }}
+          </p>
+          <p v-if="localeRelease" class="text-sm text-muted-foreground">
+            当前版本 <strong class="font-mono text-foreground">v{{ localeRelease.version }}</strong> · {{ new Date(localeRelease.created_at).toLocaleString('zh-CN') }}
+          </p>
+          <p v-else-if="!localeReleaseError" class="text-sm text-muted-foreground">
+            尚未发布。首次发布后会生成公开链接。
+          </p>
           <div v-if="localeRelease" class="max-h-64 space-y-2 overflow-y-auto">
             <div v-for="file in localeRelease.files" :key="file.language_code" class="flex items-center gap-2 rounded-lg border p-2">
               <span class="w-12 shrink-0 font-mono text-xs">{{ file.language_code }}</span>
               <a class="min-w-0 flex-1 truncate font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:underline" :href="localePublicUrl(file.language_code)" target="_blank" rel="noopener noreferrer">{{ localePublicUrl(file.language_code) }}</a>
-              <UiButton variant="ghost" size="sm" :aria-label="`复制 ${file.language_code} 链接`" @click="copyLocaleUrl(file.language_code)"><Copy class="size-4" /></UiButton>
+              <UiButton variant="ghost" size="sm" :aria-label="`复制 ${file.language_code} 链接`" @click="copyLocaleUrl(file.language_code)">
+                <Copy class="size-4" />
+              </UiButton>
             </div>
           </div>
         </div>
@@ -3769,90 +3140,14 @@ async function exportToExcel() {
         </UiAlertDialogHeader>
         <UiAlertDialogFooter>
           <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction v-permission="'locale.publish'" @click="publishLocaleRelease">发布语言文件</UiAlertDialogAction>
+          <UiAlertDialogAction v-permission="'locale.publish'" @click="publishLocaleRelease">
+            发布语言文件
+          </UiAlertDialogAction>
         </UiAlertDialogFooter>
       </UiAlertDialogContent>
     </UiAlertDialog>
 
-    <!-- 导出模态框 -->
-    <UiDialog :open="showExportModal" @update:open="val => showExportModal = val">
-      <UiDialogContent class="sm:max-w-md z-[100]">
-        <UiDialogHeader>
-          <UiDialogTitle>导出多语言 JSON</UiDialogTitle>
-          <UiDialogDescription>
-            请选择要导出的语言。每种语言生成一个 JSON 文件，并统一打包为 ZIP 下载。
-          </UiDialogDescription>
-        </UiDialogHeader>
-
-        <div class="py-4 space-y-4">
-          <div class="flex items-center justify-between">
-            <h4 class="text-sm font-medium">
-              选择目标语种
-            </h4>
-            <div class="flex items-center gap-2">
-              <button class="text-[10px] text-primary hover:underline" @click="selectAllExportLangs">
-                全选
-              </button>
-              <span class="text-[10px] text-muted-foreground opacity-30">|</span>
-              <button class="text-[10px] text-muted-foreground hover:underline" @click="deselectAllExportLangs">
-                清空
-              </button>
-            </div>
-          </div>
-          <UiScrollArea class="h-[300px] border rounded-md p-2 bg-gray-50/50 dark:bg-zinc-900/50">
-            <div class="grid grid-cols-1 gap-1">
-              <div
-                v-for="lang in targetLanguages"
-                :key="lang.code"
-                class="flex items-center gap-3 p-2 rounded-md hover:bg-white dark:hover:bg-zinc-800 cursor-pointer transition-colors border border-transparent hover:border-border"
-                :class="selectedExportLangs.includes(lang.code) ? 'bg-white dark:bg-zinc-800 border-border shadow-sm' : ''"
-                @click="toggleExportLang(lang.code)"
-              >
-                <UiCheckbox
-                  :model-value="selectedExportLangs.includes(lang.code)"
-                  class="pointer-events-none shrink-0"
-                />
-                <div class="flex flex-col min-w-0 flex-1">
-                  <span class="text-sm font-medium truncate">{{ lang.name }}</span>
-                  <span class="text-xs opacity-70 truncate">{{ lang.code }}</span>
-                </div>
-                <UiTooltipProvider>
-                  <UiTooltip>
-                    <UiTooltipTrigger as-child>
-                      <button
-                        :disabled="Boolean(copyingLanguageCode)"
-                        :aria-label="`复制${lang.name} JSON`"
-                        class="p-1.5 ml-auto text-muted-foreground hover:bg-background hover:text-foreground rounded transition border border-transparent hover:border-border shadow-sm shadow-transparent hover:shadow-sm"
-                        @click.stop="copyLangJson(lang.code, lang.name)"
-                      >
-                        <Loader2 v-if="copyingLanguageCode === lang.code" class="w-4 h-4 animate-spin" />
-                        <Copy v-else class="w-4 h-4" />
-                      </button>
-                    </UiTooltipTrigger>
-                    <UiTooltipContent>直接复制 JSON</UiTooltipContent>
-                  </UiTooltip>
-                </UiTooltipProvider>
-              </div>
-            </div>
-          </UiScrollArea>
-        </div>
-
-        <UiDialogFooter>
-          <UiButton variant="outline" :disabled="isExportingJson" @click="closeExportModal">
-            取消
-          </UiButton>
-          <UiButton
-            v-permission="'term.export'"
-            class="bg-green-600 text-white hover:bg-green-700"
-            :disabled="isExportingJson || selectedExportLangs.length === 0"
-            @click="confirmExport"
-          >
-            <Loader2 v-if="isExportingJson" class="mr-2 size-4 animate-spin" />
-            {{ isExportingJson ? '正在打包…' : `打包下载 (${selectedExportLangs.length})` }}
-          </UiButton>
-        </UiDialogFooter>
-      </UiDialogContent>
-    </UiDialog>
+    <TermExportDialog v-model:open="showExportModal" v-model:selected="selectedExportLangs" :languages="targetLanguages" :busy="isExportingJson" :copying-language="copyingLanguageCode" @export="confirmExport" @copy="copyLangJson" />
     <!-- 全局提示词设置模态框 -->
     <UiDialog :open="showSettingsModal" @update:open="val => showSettingsModal = val">
       <UiDialogContent class="sm:max-w-2xl">
@@ -3870,7 +3165,7 @@ async function exportToExcel() {
           <div class="space-y-2">
             <UiLabel class="text-sm font-bold flex justify-between items-center">
               全局默认提示词 (Default Prompt)
-              <UiButton variant="ghost" size="sm" class="h-6 text-[10px] text-muted-foreground hover:text-primary" @click="globalPrompt = '翻译以下内容，这是一个智能体APP的内容并将其翻译为本地化语言。\n待翻译原文参考：\n描述和上下文: {description}\n现有参考翻译 (若有可参考，若无请根据键名和描述推断):\n{translations}'">
+              <UiButton variant="ghost" size="sm" class="h-6 text-[10px] text-muted-foreground hover:text-primary" @click="globalPrompt = DEFAULT_TRANSLATION_PROMPT">
                 恢复默认
               </UiButton>
             </UiLabel>

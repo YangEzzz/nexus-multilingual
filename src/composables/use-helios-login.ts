@@ -1,9 +1,11 @@
+import type { LoginStatus } from '@/api/auth'
 import { onScopeDispose, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { cancelSSOLogin, getLoginStatus, startSSOLogin } from '@/api/auth'
 import { useSessionAuth } from '@/composables/use-session-auth'
-import { authRequest, safeReturnPath } from '@/utils/session'
+import { safeReturnPath } from '@/utils/session'
 
-export interface LoginStatus { status: string, message: string, return_path: string, mode: string }
+export type { LoginStatus } from '@/api/auth'
 
 export function useHeliosLogin() {
   const router = useRouter()
@@ -43,7 +45,7 @@ export function useHeliosLogin() {
       return
     checking = true
     try {
-      const status = await authRequest<LoginStatus>(`/sso/status?transaction=${encodeURIComponent(transaction)}`)
+      const status = await getLoginStatus(transaction)
       if (disposed)
         return
       if (['success', 'failed', 'cancelled'].includes(status.status)) {
@@ -91,7 +93,7 @@ export function useHeliosLogin() {
     popup = fullPage ? null : window.open('/auth/sso/complete?waiting=1', 'helios-login', 'popup,width=480,height=680')
     const mode = popup ? 'popup' : 'redirect'
     try {
-      const result = await authRequest<{ authorize_url: string, transaction_id: string }>('/sso/start', {
+      const result = await startSSOLogin({
         mode,
         return_path: safeReturnPath(router.currentRoute.value.query.redirect),
       })
@@ -120,8 +122,8 @@ export function useHeliosLogin() {
     if (!loading.value || !transaction)
       return
     try {
-      await authRequest('/sso/cancel', { transaction })
-      const status = await authRequest<LoginStatus>(`/sso/status?transaction=${encodeURIComponent(transaction)}`)
+      await cancelSSOLogin(transaction)
+      const status = await getLoginStatus(transaction)
       if (status.status === 'processing') {
         error.value = '正在完成登录，请稍候'
         return

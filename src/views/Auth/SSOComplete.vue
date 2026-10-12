@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { LoginStatus } from '@/composables/use-helios-login'
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { getLoginStatus } from '@/api/auth'
 import { useSessionAuth } from '@/composables/use-session-auth'
-import { authRequest, safeReturnPath } from '@/utils/session'
+import { safeReturnPath } from '@/utils/session'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,7 +27,7 @@ onMounted(async () => {
   try {
     if (!transaction)
       throw new Error('登录请求已失效，请返回应用重新登录')
-    const status = await authRequest<LoginStatus>(`/sso/status?transaction=${encodeURIComponent(transaction)}`)
+    const status = await getLoginStatus(transaction)
     if (status.status !== 'success')
       throw new Error(status.message || '登录未完成，请重新登录')
     title.value = '登录成功'

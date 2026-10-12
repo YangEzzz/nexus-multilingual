@@ -1,4 +1,4 @@
-import { api } from '@/request'
+import { translateWithAI } from '@/api/ai'
 
 export interface AITranslationResult {
   translations: Record<string, string>
@@ -11,8 +11,8 @@ export function requestAITranslation(input: {
   targetLanguages: string[]
   placeholderRule?: string
 }) {
-  return api.post<AITranslationResult>({
-    url: '/ai/translate',
+  return translateWithAI<AITranslationResult>({
+
     data: {
       prompt: input.prompt,
       target_languages: input.targetLanguages,

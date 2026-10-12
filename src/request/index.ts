@@ -11,7 +11,6 @@ import { ResultEnum } from '@/request/types.ts'
 import router from '@/router/index'
 import { useAuthStore } from '@/store/auth'
 import { apiBaseURL, clearLegacyAuth, getCSRFToken } from '@/utils/session'
-// import router from '@/router'
 
 // 定义响应数据类型
 export interface ResponseData<T = unknown> {
@@ -102,7 +101,7 @@ const responseHandler = (response: AxiosResponse) => {
   }
 
   // 未设置状态码则默认成功状态
-  const code = data.code || 200
+  const code = data.code ?? 200
 
   // 二进制数据则直接返回
   if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
@@ -139,32 +138,13 @@ export const api = {
     return request({ method: 'POST', ...option })
   },
 
-  stream: (option: AxiosRequestConfig): Promise<ReadableStream<Uint8Array> | null> => {
-    return request({
-      method: 'POST',
-      responseType: 'stream',
-      ...option,
-    }).then((response) => {
-      if (response instanceof Response) {
-        return response.body
-      }
-      return null
-    })
-  },
-
-  /* delete: <T>(option: AxiosRequestConfig): Promise<ResponseData<T>> => {
-    return request({ method: 'DELETE', ...option })
-  },
-  put: <T>(option: AxiosRequestConfig): Promise<ResponseData<T>> => {
-    return request({ method: 'PUT', ...option })
-  }, */
-
-  download: (option: AxiosRequestConfig): Promise<Blob> => {
-    return request({
+  download: async (option: AxiosRequestConfig): Promise<Blob> => {
+    const response = await request<Blob, AxiosResponse<Blob>>({
       method: 'GET',
-      responseType: 'blob',
       ...option,
+      responseType: 'blob',
     })
+    return response.data
   },
 
   downloadPost: async (option: AxiosRequestConfig): Promise<DownloadData> => {
@@ -191,9 +171,6 @@ export const api = {
   upload: <T>(option: UploadRequestConfig): Promise<ResponseData<T>> => {
     return request({
       method: 'POST',
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
       ...option,
     })
   },
@@ -210,7 +187,7 @@ export const retryRequest = async <T>(requestFn: () => Promise<T>, maxRetries = 
     catch (error) {
       if (retries < maxRetries) {
         retries++
-        console.log(`请求失败，第${retries}次重试...`)
+        console.warn(`请求失败，第${retries}次重试...`)
         await new Promise(resolve => setTimeout(resolve, delay))
         return execute()
       }

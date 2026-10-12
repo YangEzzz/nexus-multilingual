@@ -15,7 +15,7 @@ import {
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { api } from '@/request'
+import { listProjectLogs } from '@/api/projects'
 
 defineOptions({ name: 'ProjectLogs' })
 
@@ -152,7 +152,7 @@ const fetchLogs = async () => {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await api.get({ url: `/projects/${projectId.value}/logs` })
+    const res = await listProjectLogs(projectId.value)
     logs.value = (res.data as LogItem[]) || []
   }
   catch {

@@ -4,11 +4,11 @@ Nexus 使用 Helios 账号和 `nexus-multilingual` 项目角色。点击登录�
 
 ## 当前本地联调
 
-| 服务 | 地址 | 数据库 |
-| --- | --- | --- |
-| Nexus 前端 | http://localhost:5173 | — |
-| Nexus 后端 | http://127.0.0.1:3457 | 远程 `nexus_db` |
-| Helios 前端 | http://localhost:5174 | — |
+| 服务        | 地址                  | 数据库                       |
+| ----------- | --------------------- | ---------------------------- |
+| Nexus 前端  | http://localhost:5173 | —                            |
+| Nexus 后端  | http://127.0.0.1:3457 | 远程 `nexus_db`              |
+| Helios 前端 | http://localhost:5174 | —                            |
 | Helios 后端 | http://127.0.0.1:3456 | 同一远程服务器的 `system_db` |
 
 Helios 服务的 `.env` 与 Nexus 后端 `.env` 使用相同数据库服务器、端口和数据库账号，数据库名分别为 `system_db` 和 `nexus_db`。这些文件已被 Git 忽略；不需要安装或下载本地 PostgreSQL。Helios `.env` 优先于 `.env-production`；Nexus 保留 `.env-production` 优先的既有加载规则。环境变量优先于文件。
@@ -39,12 +39,12 @@ Helios 项目详情的“统一登录接入”管理客户端、精确回调地�
 
 生产环境沿用现有域名规则：页面域名提供静态页面，所有浏览器 API 请求、授权入口和后端回调都使用各自的 API 子域名。页面域名不增加 `/api` 代理。
 
-| 用途 | 地址 |
-| --- | --- |
-| Helios 页面 | https://helios.team-tool.top |
-| Helios API 与授权入口 | https://helios-api.team-tool.top |
-| Nexus 页面与登录完成页 | https://nexus.team-tool.top |
-| Nexus API 与后端回调 | https://nexus-api.team-tool.top |
+| 用途                   | 地址                             |
+| ---------------------- | -------------------------------- |
+| Helios 页面            | https://helios.team-tool.top     |
+| Helios API 与授权入口  | https://helios-api.team-tool.top |
+| Nexus 页面与登录完成页 | https://nexus.team-tool.top      |
+| Nexus API 与后端回调   | https://nexus-api.team-tool.top  |
 
 前端构建时使用下面的地址。Helios 配置不带 `/api` 后缀；Nexus 配置带 `/api/v1`。Axios 和登录请求共用同一配置。
 

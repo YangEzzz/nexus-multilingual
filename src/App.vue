@@ -2,8 +2,8 @@
 import { onMounted } from 'vue'
 import Loading from '@/components/Loading.vue'
 import { Toaster } from '@/components/ui/sonner'
-import { useSystemTheme } from '@/composables/use-system-theme'
 import { useAuth } from '@/composables/use-auth'
+import { useSystemTheme } from '@/composables/use-system-theme'
 
 const { getUserInfo } = useAuth()
 useSystemTheme()

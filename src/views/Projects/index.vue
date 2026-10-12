@@ -1,30 +1,24 @@
 <script setup lang="ts">
+import type { Project as I18nProject, ProjectLanguage } from '@/types/domain'
 import { ArrowRight, CalendarDays, Folder, Languages, Loader2, Pencil, Plus, RefreshCcw, Search, Trash2, X } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
+import { createProject, deleteProject, listProjects, updateProject, updateProjectLanguages } from '@/api/projects'
 import { usePermission } from '@/composables/use-permission'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
-import { api } from '@/request'
+import { errorMessage } from '@/lib/errors'
+
+import { saveProjectConfiguration } from '@/lib/project-save'
 
 defineOptions({ name: 'Projects' })
-
-interface I18nProject {
-  id: number
-  name: string
-  code: string
-  description: string
-  created_at: string
-  updated_at: string
-  languages?: Array<{ code: string, name: string }>
-}
 
 const router = useRouter()
 const { can } = usePermission()
 const projects = ref<I18nProject[]>([])
 const loading = ref(true)
 const loadError = ref('')
-const availableLanguages = ref<Array<{ code: string, name: string }>>([])
+const availableLanguages = ref<ProjectLanguage[]>([])
 const languagesLoading = ref(false)
 const languagesError = ref('')
 const searchQuery = ref('')
@@ -69,12 +63,12 @@ async function loadProjects() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await api.get<I18nProject[]>({ url: '/projects' })
+    const res = await listProjects<I18nProject[]>()
     projects.value = res.data ?? []
   }
-  catch (e: any) {
-    loadError.value = e.message || '暂时无法获取项目列表'
-    toast.error('加载项目失败', { description: e.message })
+  catch (e: unknown) {
+    loadError.value = errorMessage(e) || '暂时无法获取项目列表'
+    toast.error('加载项目失败', { description: errorMessage(e) })
   }
   finally {
     loading.value = false
@@ -87,8 +81,8 @@ async function loadAvailableLanguages() {
   try {
     availableLanguages.value = await fetchAvailableLanguages()
   }
-  catch (e: any) {
-    languagesError.value = e.message || '无法获取可选语言'
+  catch (e: unknown) {
+    languagesError.value = errorMessage(e) || '无法获取可选语言'
   }
   finally {
     languagesLoading.value = false
@@ -122,10 +116,6 @@ function openEdit(project: I18nProject) {
   selectedLangCodes.value = (project.languages || []).map(l => l.code)
   showDialog.value = true
 }
-async function saveLanguages(projectId: number) {
-  const langs = availableLanguages.value.filter(lang => selectedLangCodes.value.includes(lang.code))
-  await api.post({ url: `/projects/${projectId}/languages/update`, data: langs })
-}
 
 function confirmDelete(project: I18nProject) {
   if (!can('project.delete'))
@@ -135,6 +125,8 @@ function confirmDelete(project: I18nProject) {
 }
 
 async function submitForm() {
+  if (submitting.value)
+    return
   if (!can(isEditing.value ? 'project.edit' : 'project.create'))
     return
   const name = formData.value.name.trim()
@@ -150,27 +142,23 @@ async function submitForm() {
   submitting.value = true
   formError.value = ''
   try {
-    if (isEditing.value) {
-      await api.post({
-        url: `/projects/${formData.value.id}/update`,
-        data: { ...formData.value, name, code },
-      })
-      await saveLanguages(formData.value.id)
-      toast.success('更新成功')
-    }
-    else {
-      const res = await api.post<any>({ url: '/projects', data: { ...formData.value, name, code } })
-      const newId = res.data?.id
-      if (newId)
-        await saveLanguages(newId)
-      toast.success('项目创建成功')
-    }
+    formData.value.name = name
+    formData.value.code = code
+    const languages = availableLanguages.value.filter(language => selectedLangCodes.value.includes(language.code))
+    await saveProjectConfiguration(formData.value, languages, {
+      create: async form => (await createProject<I18nProject>({ data: form })).data.id,
+      update: async (form) => { await updateProject(form.id, { data: form }) },
+      languages: async (id, selected) => { await updateProjectLanguages(id, { data: selected }) },
+    })
+    sessionStorage.removeItem(`project_langs_${formData.value.id}`)
+    toast.success(isEditing.value ? '项目已更新' : '项目已创建')
     showDialog.value = false
     await loadProjects()
   }
-  catch (e: any) {
-    formError.value = e.message || '保存失败，请检查后重试。'
-    toast.error('操作失败', { description: e.message })
+  catch (e: unknown) {
+    isEditing.value = Boolean(formData.value.id)
+    formError.value = errorMessage(e, '保存失败，请检查后重试。')
+    toast.error('操作失败', { description: errorMessage(e) })
   }
   finally {
     submitting.value = false
@@ -184,13 +172,13 @@ async function doDelete() {
     return
   deleting.value = true
   try {
-    await api.post({ url: `/projects/${deletingProject.value.id}/delete` })
+    await deleteProject(deletingProject.value.id)
     toast.success('项目已删除')
     showDeleteDialog.value = false
     await loadProjects()
   }
-  catch (e: any) {
-    toast.error('删除失败', { description: e.message })
+  catch (e: unknown) {
+    toast.error('删除失败', { description: errorMessage(e) })
   }
   finally {
     deleting.value = false
@@ -198,9 +186,6 @@ async function doDelete() {
 }
 
 function enterWorkbench(project: I18nProject) {
-  if (project.languages && project.languages.length > 0) {
-    sessionStorage.setItem(`project_langs_${project.id}`, JSON.stringify(project.languages))
-  }
   router.push(`/workbench?project=${project.id}`)
 }
 

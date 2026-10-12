@@ -70,11 +70,13 @@ declare global {
   const useAxios: typeof import('../composables/use-axios').useAxios
   const useCssModule: typeof import('vue').useCssModule
   const useCssVars: typeof import('vue').useCssVars
+  const useDiscardConfirmation: typeof import('../composables/use-discard-confirmation').useDiscardConfirmation
   const useHeliosLogin: typeof import('../composables/use-helios-login').useHeliosLogin
   const useId: typeof import('vue').useId
   const useModal: typeof import('../composables/use-modal').useModal
   const useModel: typeof import('vue').useModel
   const usePermission: typeof import('../composables/use-permission').usePermission
+  const useRequestScope: typeof import('../composables/use-request-scope').useRequestScope
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSessionAuth: typeof import('../composables/use-session-auth').useSessionAuth
@@ -82,6 +84,8 @@ declare global {
   const useSlots: typeof import('vue').useSlots
   const useSystemTheme: typeof import('../composables/use-system-theme').useSystemTheme
   const useTemplateRef: typeof import('vue').useTemplateRef
+  const useTermImport: typeof import('../composables/use-term-import').useTermImport
+  const useTermTranslation: typeof import('../composables/use-term-translation').useTermTranslation
   const useThemeStore: typeof import('../store/theme').useThemeStore
   const watch: typeof import('vue').watch
   const watchEffect: typeof import('vue').watchEffect

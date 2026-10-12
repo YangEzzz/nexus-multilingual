@@ -2,7 +2,6 @@
 import type { TwoColAsideNavItem } from './types'
 
 import { ChevronsUpDownIcon } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
 import { DropdownMenu } from '@/components/ui/dropdown-menu'
 
 const props = defineProps<{
@@ -30,11 +29,11 @@ const currentLink = computed(() => props.nav.find(link => link.url === currentPa
 
     <DropdownMenu class="lg:hidden">
       <DropdownMenuTrigger as-child>
-        <Button variant="outline" class="w-48 lg:hidden">
+        <UiButton variant="outline" class="w-48 lg:hidden">
           <component :is="currentLink?.icon" class="size-4 mr-1" />
           <span>{{ currentLink?.title }}</span>
           <ChevronsUpDownIcon class="size-4 ml-auto" />
-        </Button>
+        </UiButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent class="w-48" align="start">
         <DropdownMenuItem

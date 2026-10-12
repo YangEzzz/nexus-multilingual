@@ -18,5 +18,8 @@ export interface DataTableProps<T> {
   loading?: boolean
   columns: ColumnDef<T, any>[]
   data: T[]
+  getRowId?: (row: T, index: number) => string
+  manualSorting?: boolean
+  manualFiltering?: boolean
   serverPagination?: ServerPagination
 }

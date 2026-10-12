@@ -22,8 +22,10 @@ export default antfu({
     'antfu/top-level-function': 'off',
     // 强制使用箭头函数
     'prefer-arrow-callback': ['warn', { allowNamedFunctions: false }],
-    // 禁止使用 function 声明,只允许箭头函数
-    'func-style': ['warn', 'expression', { allowArrowFunctions: true }],
+    // 命名业务函数允许声明式；回调继续使用箭头函数。
+    'func-style': ['error', 'declaration', { allowArrowFunctions: true }],
+    // setup 中的延迟执行闭包不要求变量提前声明；类仍检查顺序。
+    'ts/no-use-before-define': ['error', { functions: false, variables: false, classes: true, typedefs: false }],
     // console 使用警告而不是错误
     'no-console': 'warn',
     // 未使用的变量警告而不是错误

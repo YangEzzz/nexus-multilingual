@@ -2,7 +2,6 @@
 import { Download } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useModal } from '@/composables/use-modal'
@@ -38,10 +37,10 @@ const { Modal, contentClass } = useModal()
 <template>
   <component :is="Modal.Root" v-model:open="isOpen">
     <component :is="Modal.Trigger" as-child>
-      <Button variant="outline">
+      <UiButton variant="outline">
         Import
         <Download />
-      </Button>
+      </UiButton>
     </component>
 
     <component :is="Modal.Content" :class="contentClass">
@@ -61,12 +60,12 @@ const { Modal, contentClass } = useModal()
       </div>
 
       <component :is="Modal.Footer">
-        <Button variant="secondary" @click="isOpen = false">
+        <UiButton variant="secondary" @click="isOpen = false">
           Cancel
-        </Button>
-        <Button @click="onSubmit">
+        </UiButton>
+        <UiButton @click="onSubmit">
           Import
-        </Button>
+        </UiButton>
       </component>
     </component>
   </component>

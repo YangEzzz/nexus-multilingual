@@ -18,6 +18,23 @@
 - 基础导航不要求匹配四个角色枚举，角色未加载或无法识别时也保持显示；具体操作权限仍默认拒绝。
 - 后端接口授权是数据安全边界，前端指令只是交互控制。项目和语言范围尚未建模。
 
+## 编辑与异步恢复
+
+- `use-request-scope.ts` 管理项目上下文、请求失效与卸载取消；旧响应不得改变当前项目状态。
+- `use-term-translation.ts` 统一行内和抽屉提示词、结果归属与状态策略。AI 结果仍须人工校对，未发布词条保持 pending；人工改动不得被旧响应覆盖。
+- `term-draft.ts` 同时恢复表格与跨页选择缓存，同一 ID 的实体引用保持一致。
+- `TermEditorSheet.vue` 和 `TermExportDialog.vue` 是编辑与导出的领域组件，基础控件继续使用 shadcn-vue。
+- 关闭抽屉、切项目和离开工作台前处理未保存修改；提交期间等待操作完成。确认框高于抽屉，取消确认后保留输入和焦点。
+- 编辑及未保存翻译期间冻结筛选与分页；后台刷新保留未提交翻译。
+- `use-term-import.ts` 管理文件输入和导入。对象仅接受严格 JSON，不执行代码；Excel 解析库按需加载。
+- `project-save.ts` 在创建成功后保留项目 ID；语言保存失败后重试同一项目。
+- 生产环境不开放示例 Tasks 路由。
+
+## 工程验证
+
+- `pnpm check` 执行零警告 lint、类型检查和隔离回归；`pnpm build` 在构建前执行类型检查。
+- `/tests/permission.html` 验证已有权限回归；`/tests/workbench-regression.html` 使用内存 API 检查编辑、错误恢复和键盘操作。
+
 ## Canonical UI Map
 
 | Capability      | Canonical owner                                          | Source of truth       | Allowed variants                          | Verification            |

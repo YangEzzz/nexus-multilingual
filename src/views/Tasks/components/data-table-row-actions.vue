@@ -6,8 +6,6 @@ import type { Task } from '../data/schema'
 
 import { Ellipsis, FilePenLine, Trash2 } from 'lucide-vue-next'
 
-import { Button } from '@/components/ui/button'
-
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,13 +57,13 @@ const { Modal, contentClass } = useModal()
   <component :is="Modal.Root" v-model:open="isOpen">
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button
+        <UiButton
           variant="ghost"
           class="flex h-8 w-8 p-0 data-[state=open]:bg-muted"
         >
           <Ellipsis class="size-4" />
           <span class="sr-only">Open menu</span>
-        </Button>
+        </UiButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" class="w-[160px]">
         <component :is="Modal.Trigger" as-child>

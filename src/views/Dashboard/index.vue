@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import type { Project as I18nProject } from '@/types/domain'
 import {
   Activity,
   AlertCircle,
@@ -14,20 +13,15 @@ import {
   RefreshCw,
   Wrench,
 } from 'lucide-vue-next'
-import { api } from '@/request'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
+import { getProjectDashboard, listProjects } from '@/api/projects'
+import { useRequestScope } from '@/composables/use-request-scope'
+import { errorMessage } from '@/lib/errors'
 import DashboardSkeleton from './DashboardSkeleton.vue'
 
-defineOptions({ name: 'dashboard' })
-
-interface I18nProject {
-  id: number
-  name: string
-  code: string
-  description: string
-  updated_at: string
-  languages?: Array<{ code: string, name: string, is_source?: boolean }>
-}
+defineOptions({ name: 'Dashboard' })
 
 interface DashboardStats {
   total: number
@@ -91,6 +85,8 @@ interface DashboardPayload {
 const router = useRouter()
 const projects = ref<I18nProject[]>([])
 const selectedProjectId = ref<number | null>(null)
+const dashboardScope = useRequestScope(() => String(selectedProjectId.value || ''))
+let dashboardRequest = 0
 const dashboard = ref<DashboardPayload | null>(null)
 const loadingProjects = ref(true)
 const loadingDashboard = ref(false)
@@ -106,7 +102,8 @@ const activityTrend = computed(() => dashboard.value?.activity_trend ?? [])
 const sourceLanguage = computed(() => languageCoverage.value.find(language => language.is_source) ?? null)
 const targetLanguageCount = computed(() => Math.max(languageCoverage.value.filter(language => !language.is_source).length, 0))
 const publishedRate = computed(() => {
-  if (!stats.value?.total) return 0
+  if (!stats.value?.total)
+    return 0
   return Math.round((stats.value.published / stats.value.total) * 100)
 })
 
@@ -128,7 +125,8 @@ const maxTrendCount = computed(() => Math.max(...activityTrend.value.map(point =
 
 const statCards = computed(() => {
   const currentStats = stats.value
-  if (!currentStats) return []
+  if (!currentStats)
+    return []
 
   return [
     {
@@ -173,7 +171,7 @@ const statCards = computed(() => {
 async function loadProjects() {
   loadingProjects.value = true
   try {
-    const res = await api.get<I18nProject[]>({ url: '/projects' })
+    const res = await listProjects<I18nProject[]>()
     projects.value = res.data ?? []
     const savedProjectId = Number(localStorage.getItem('dashboard_project_id') || '')
     const defaultProject = projects.value.find(project => project.id === savedProjectId) ?? projects.value[0] ?? null
@@ -182,25 +180,37 @@ async function loadProjects() {
       selectedProjectId.value = defaultProject.id
       await loadDashboard()
     }
-  } catch (error: any) {
-    toast.error('加载项目失败', { description: error.message })
-  } finally {
+  }
+  catch (error: unknown) {
+    toast.error('加载项目失败', { description: errorMessage(error) })
+  }
+  finally {
     loadingProjects.value = false
   }
 }
 
 async function loadDashboard() {
-  if (!selectedProjectId.value) return
+  if (!selectedProjectId.value)
+    return
 
+  const ticket = dashboardScope.request()
+  const requestId = ++dashboardRequest
   loadingDashboard.value = true
   try {
-    const res = await api.get<DashboardPayload>({ url: `/projects/${selectedProjectId.value}/dashboard` })
+    const res = await getProjectDashboard<DashboardPayload>(ticket.context, { signal: ticket.signal })
+    if (!ticket.isCurrent() || requestId !== dashboardRequest)
+      return
     dashboard.value = res.data
     localStorage.setItem('dashboard_project_id', String(selectedProjectId.value))
-  } catch (error: any) {
-    toast.error('加载仪表盘失败', { description: error.message })
-  } finally {
-    loadingDashboard.value = false
+  }
+  catch (error: unknown) {
+    if (ticket.isCurrent() && requestId === dashboardRequest)
+      toast.error('加载仪表盘失败', { description: errorMessage(error) })
+  }
+  finally {
+    ticket.release()
+    if (ticket.isCurrent() && requestId === dashboardRequest)
+      loadingDashboard.value = false
   }
 }
 
@@ -208,34 +218,43 @@ async function switchProject(id: number) {
   if (selectedProjectId.value === id && dashboard.value)
     return
 
+  dashboardScope.invalidate()
+  dashboard.value = null
   selectedProjectId.value = id
   await loadDashboard()
 }
 
 function goWorkbench() {
-  if (!selectedProjectId.value) return
+  if (!selectedProjectId.value)
+    return
   router.push({ path: '/workbench', query: { project: selectedProjectId.value } })
 }
 
 function goLogs() {
-  if (!selectedProjectId.value) return
+  if (!selectedProjectId.value)
+    return
   router.push({ path: '/project-logs', query: { project: selectedProjectId.value } })
 }
 
 function formatRelativeTime(value?: string | null) {
-  if (!value) return '暂无记录'
+  if (!value)
+    return '暂无记录'
   const date = new Date(value)
   const diff = Date.now() - date.getTime()
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
+  if (minutes < 1)
+    return '刚刚'
+  if (minutes < 60)
+    return `${minutes} 分钟前`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时前`
+  if (hours < 24)
+    return `${hours} 小时前`
   return `${Math.floor(hours / 24)} 天前`
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return '暂无'
+  if (!value)
+    return '暂无'
   return new Intl.DateTimeFormat('zh-CN', {
     month: 'short',
     day: 'numeric',
@@ -255,8 +274,12 @@ onMounted(loadProjects)
   <div class="min-h-0 space-y-6 p-4 lg:p-6">
     <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">仪表盘</h1>
-        <p class="mt-1 text-sm text-muted-foreground">聚焦当前项目的翻译进度、阻塞点和最近动态。</p>
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+          仪表盘
+        </h1>
+        <p class="mt-1 text-sm text-muted-foreground">
+          聚焦当前项目的翻译进度、阻塞点和最近动态。
+        </p>
       </div>
 
       <div class="flex items-center gap-2">
@@ -274,9 +297,15 @@ onMounted(loadProjects)
 
     <div v-else-if="projects.length === 0" class="rounded-3xl border border-dashed bg-card/70 p-10 text-center">
       <FolderKanban class="mx-auto mb-4 size-10 text-muted-foreground/60" />
-      <h2 class="text-lg font-semibold">还没有翻译项目</h2>
-      <p class="mt-2 text-sm text-muted-foreground">先创建项目，再回来查看整体进度与翻译健康度。</p>
-      <UiButton class="mt-5" @click="router.push('/projects')">前往项目管理</UiButton>
+      <h2 class="text-lg font-semibold">
+        还没有翻译项目
+      </h2>
+      <p class="mt-2 text-sm text-muted-foreground">
+        先创建项目，再回来查看整体进度与翻译健康度。
+      </p>
+      <UiButton class="mt-5" @click="router.push('/projects')">
+        前往项目管理
+      </UiButton>
     </div>
 
     <template v-else>
@@ -307,8 +336,12 @@ onMounted(loadProjects)
                     当前项目
                   </div>
                   <div>
-                    <h2 class="text-2xl font-semibold tracking-tight">{{ currentProject.name }}</h2>
-                    <p class="mt-1 font-mono text-xs text-muted-foreground">{{ currentProject.code }}</p>
+                    <h2 class="text-2xl font-semibold tracking-tight">
+                      {{ currentProject.name }}
+                    </h2>
+                    <p class="mt-1 font-mono text-xs text-muted-foreground">
+                      {{ currentProject.code }}
+                    </p>
                   </div>
                   <p class="max-w-2xl text-sm leading-6 text-muted-foreground">
                     {{ currentProject.description || '这个项目还没有补充描述，可以在项目管理中完善背景说明与命名规范。' }}
@@ -317,31 +350,51 @@ onMounted(loadProjects)
 
                 <div class="grid gap-2 text-sm text-muted-foreground">
                   <div class="rounded-2xl border bg-background/70 px-4 py-3">
-                    <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">最近活跃</div>
-                    <div class="mt-1 font-medium text-foreground">{{ formatRelativeTime(dashboard.last_activity_at) }}</div>
+                    <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">
+                      最近活跃
+                    </div>
+                    <div class="mt-1 font-medium text-foreground">
+                      {{ formatRelativeTime(dashboard.last_activity_at) }}
+                    </div>
                   </div>
                   <div class="rounded-2xl border bg-background/70 px-4 py-3">
-                    <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">最近更新</div>
-                    <div class="mt-1 font-medium text-foreground">{{ formatDate(currentProject.updated_at) }}</div>
+                    <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">
+                      最近更新
+                    </div>
+                    <div class="mt-1 font-medium text-foreground">
+                      {{ formatDate(currentProject.updated_at) }}
+                    </div>
                   </div>
                 </div>
               </div>
 
               <div class="grid gap-3 sm:grid-cols-3">
                 <div class="rounded-2xl border bg-background/75 p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">词条总量</div>
-                  <div class="mt-2 text-3xl font-semibold">{{ stats.total }}</div>
+                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    词条总量
+                  </div>
+                  <div class="mt-2 text-3xl font-semibold">
+                    {{ stats.total }}
+                  </div>
                 </div>
                 <div class="rounded-2xl border bg-background/75 p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">目标语种</div>
-                  <div class="mt-2 text-3xl font-semibold">{{ targetLanguageCount }}</div>
+                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    目标语种
+                  </div>
+                  <div class="mt-2 text-3xl font-semibold">
+                    {{ targetLanguageCount }}
+                  </div>
                   <div class="mt-1 text-xs text-muted-foreground">
                     源语言：{{ sourceLanguage?.name || '未设置' }}
                   </div>
                 </div>
                 <div class="rounded-2xl border bg-background/75 p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">整体发布率</div>
-                  <div class="mt-2 text-3xl font-semibold">{{ publishedRate }}%</div>
+                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    整体发布率
+                  </div>
+                  <div class="mt-2 text-3xl font-semibold">
+                    {{ publishedRate }}%
+                  </div>
                   <div class="mt-2 h-2 overflow-hidden rounded-full bg-primary/10">
                     <div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${publishedRate}%` }" />
                   </div>
@@ -353,8 +406,12 @@ onMounted(loadProjects)
           <section class="rounded-3xl border bg-card p-6 shadow-sm">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="text-sm font-semibold">当前关注点</h3>
-                <p class="mt-1 text-xs text-muted-foreground">用最少信息先看清下一步要做什么。</p>
+                <h3 class="text-sm font-semibold">
+                  当前关注点
+                </h3>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  用最少信息先看清下一步要做什么。
+                </p>
               </div>
               <CircleDotDashed class="size-4 text-muted-foreground" />
             </div>
@@ -362,28 +419,48 @@ onMounted(loadProjects)
             <div class="mt-5 space-y-3">
               <div class="flex items-start justify-between rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4 dark:border-sky-950 dark:bg-sky-950/20">
                 <div>
-                  <div class="text-sm font-medium text-sky-700 dark:text-sky-300">优先校对</div>
-                  <p class="mt-1 text-xs text-sky-700/80 dark:text-sky-300/80">已补全翻译、可以校对通过的词条</p>
+                  <div class="text-sm font-medium text-sky-700 dark:text-sky-300">
+                    优先校对
+                  </div>
+                  <p class="mt-1 text-xs text-sky-700/80 dark:text-sky-300/80">
+                    已补全翻译、可以校对通过的词条
+                  </p>
                 </div>
-                <div class="text-2xl font-semibold text-sky-700 dark:text-sky-300">{{ focus.terms_ready_for_review }}</div>
+                <div class="text-2xl font-semibold text-sky-700 dark:text-sky-300">
+                  {{ focus.terms_ready_for_review }}
+                </div>
               </div>
 
               <div class="flex items-start justify-between rounded-2xl border border-amber-200/70 bg-amber-50/70 p-4 dark:border-amber-950 dark:bg-amber-950/20">
                 <div>
-                  <div class="text-sm font-medium text-amber-700 dark:text-amber-300">翻译进行中</div>
-                  <p class="mt-1 text-xs text-amber-700/80 dark:text-amber-300/80">仍有语种缺口，需要继续补齐</p>
+                  <div class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                    翻译进行中
+                  </div>
+                  <p class="mt-1 text-xs text-amber-700/80 dark:text-amber-300/80">
+                    仍有语种缺口，需要继续补齐
+                  </p>
                 </div>
-                <div class="text-2xl font-semibold text-amber-700 dark:text-amber-300">{{ focus.terms_pending }}</div>
+                <div class="text-2xl font-semibold text-amber-700 dark:text-amber-300">
+                  {{ focus.terms_pending }}
+                </div>
               </div>
 
               <div class="grid gap-3 sm:grid-cols-2">
                 <div class="rounded-2xl border p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">24h 变更</div>
-                  <div class="mt-2 text-2xl font-semibold">{{ focus.recent_changes_24h }}</div>
+                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    24h 变更
+                  </div>
+                  <div class="mt-2 text-2xl font-semibold">
+                    {{ focus.recent_changes_24h }}
+                  </div>
                 </div>
                 <div class="rounded-2xl border p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">超 7 天未收口</div>
-                  <div class="mt-2 text-2xl font-semibold">{{ focus.stale_terms }}</div>
+                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    超 7 天未收口
+                  </div>
+                  <div class="mt-2 text-2xl font-semibold">
+                    {{ focus.stale_terms }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -394,8 +471,12 @@ onMounted(loadProjects)
           <section class="rounded-3xl border bg-card p-6 shadow-sm">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="text-sm font-semibold">流程状态</h3>
-                <p class="mt-1 text-xs text-muted-foreground">从草稿到发布，当前积压一眼看清。</p>
+                <h3 class="text-sm font-semibold">
+                  流程状态
+                </h3>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  从草稿到发布，当前积压一眼看清。
+                </p>
               </div>
               <Activity class="size-4 text-muted-foreground" />
             </div>
@@ -411,8 +492,12 @@ onMounted(loadProjects)
                   <span class="text-sm font-medium" :class="card.tone">{{ card.label }}</span>
                   <component :is="card.icon" class="size-4" :class="card.tone" />
                 </div>
-                <div class="mt-4 text-3xl font-semibold">{{ card.value }}</div>
-                <p class="mt-1 text-xs text-muted-foreground">{{ card.hint }}</p>
+                <div class="mt-4 text-3xl font-semibold">
+                  {{ card.value }}
+                </div>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  {{ card.hint }}
+                </p>
               </article>
             </div>
           </section>
@@ -420,8 +505,12 @@ onMounted(loadProjects)
           <section class="rounded-3xl border bg-card p-6 shadow-sm">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="text-sm font-semibold">最近 7 天活跃度</h3>
-                <p class="mt-1 text-xs text-muted-foreground">根据日志条数观察项目活跃程度。</p>
+                <h3 class="text-sm font-semibold">
+                  最近 7 天活跃度
+                </h3>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  根据日志条数观察项目活跃程度。
+                </p>
               </div>
               <span class="text-xs text-muted-foreground">最近一周</span>
             </div>
@@ -441,7 +530,9 @@ onMounted(loadProjects)
                 <div class="text-center text-[11px] text-muted-foreground">
                   {{ point.date.slice(5).replace('-', '/') }}
                 </div>
-                <div class="text-[11px] font-medium text-foreground">{{ point.count }}</div>
+                <div class="text-[11px] font-medium text-foreground">
+                  {{ point.count }}
+                </div>
               </div>
             </div>
           </section>
@@ -451,8 +542,12 @@ onMounted(loadProjects)
           <section class="flex min-h-0 flex-col rounded-3xl border bg-card p-6 shadow-sm xl:h-[44rem]">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="text-sm font-semibold">语种健康度</h3>
-                <p class="mt-1 text-xs text-muted-foreground">优先把落后的语言包补齐，避免后续集中返工。</p>
+                <h3 class="text-sm font-semibold">
+                  语种健康度
+                </h3>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  优先把落后的语言包补齐，避免后续集中返工。
+                </p>
               </div>
               <div class="text-xs text-muted-foreground">
                 共 {{ languageCoverage.length }} 个语种
@@ -486,8 +581,12 @@ onMounted(loadProjects)
                       </p>
                     </div>
                     <div class="text-right">
-                      <div class="text-2xl font-semibold">{{ language.progress }}%</div>
-                      <div class="text-[11px] text-muted-foreground">{{ language.code }}</div>
+                      <div class="text-2xl font-semibold">
+                        {{ language.progress }}%
+                      </div>
+                      <div class="text-[11px] text-muted-foreground">
+                        {{ language.code }}
+                      </div>
                     </div>
                   </div>
 
@@ -507,8 +606,12 @@ onMounted(loadProjects)
             <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border bg-card p-6 shadow-sm">
               <div class="flex items-center justify-between">
                 <div>
-                  <h3 class="text-sm font-semibold">优先关注的语种</h3>
-                  <p class="mt-1 text-xs text-muted-foreground">默认显示进度最低的 3 个目标语种。</p>
+                  <h3 class="text-sm font-semibold">
+                    优先关注的语种
+                  </h3>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    默认显示进度最低的 3 个目标语种。
+                  </p>
                 </div>
                 <Languages class="size-4 text-muted-foreground" />
               </div>
@@ -526,10 +629,16 @@ onMounted(loadProjects)
                   >
                     <div class="flex items-center justify-between">
                       <div>
-                        <div class="font-medium">{{ language.name }}</div>
-                        <div class="mt-1 text-xs text-muted-foreground">还缺 {{ language.missing_count }} 条</div>
+                        <div class="font-medium">
+                          {{ language.name }}
+                        </div>
+                        <div class="mt-1 text-xs text-muted-foreground">
+                          还缺 {{ language.missing_count }} 条
+                        </div>
                       </div>
-                      <div class="text-xl font-semibold">{{ language.progress }}%</div>
+                      <div class="text-xl font-semibold">
+                        {{ language.progress }}%
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -539,8 +648,12 @@ onMounted(loadProjects)
             <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border bg-card p-6 shadow-sm">
               <div class="flex items-center justify-between">
                 <div>
-                  <h3 class="text-sm font-semibold">快捷入口</h3>
-                  <p class="mt-1 text-xs text-muted-foreground">把常用动作放在右手边，减少切换成本。</p>
+                  <h3 class="text-sm font-semibold">
+                    快捷入口
+                  </h3>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    把常用动作放在右手边，减少切换成本。
+                  </p>
                 </div>
               </div>
 
@@ -553,8 +666,12 @@ onMounted(loadProjects)
                     <Wrench class="size-4" />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="font-medium">打开工作台</div>
-                    <div class="text-xs text-muted-foreground">继续翻译、校对或发布词条</div>
+                    <div class="font-medium">
+                      打开工作台
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      继续翻译、校对或发布词条
+                    </div>
                   </div>
                   <ArrowRight class="size-4 text-muted-foreground" />
                 </button>
@@ -567,8 +684,12 @@ onMounted(loadProjects)
                     <Clock3 class="size-4" />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="font-medium">查看全部日志</div>
-                    <div class="text-xs text-muted-foreground">按时间线回看所有变更与发布历史</div>
+                    <div class="font-medium">
+                      查看全部日志
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      按时间线回看所有变更与发布历史
+                    </div>
                   </div>
                   <ArrowRight class="size-4 text-muted-foreground" />
                 </button>
@@ -581,8 +702,12 @@ onMounted(loadProjects)
                     <FolderKanban class="size-4" />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="font-medium">管理项目设置</div>
-                    <div class="text-xs text-muted-foreground">调整语言配置、项目描述和基础信息</div>
+                    <div class="font-medium">
+                      管理项目设置
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      调整语言配置、项目描述和基础信息
+                    </div>
                   </div>
                   <ArrowRight class="size-4 text-muted-foreground" />
                 </button>
@@ -594,10 +719,16 @@ onMounted(loadProjects)
         <section class="rounded-3xl border bg-card p-6 shadow-sm">
           <div class="flex items-center justify-between">
             <div>
-              <h3 class="text-sm font-semibold">最近动态</h3>
-              <p class="mt-1 text-xs text-muted-foreground">展示最新操作，帮助团队快速理解当前推进节奏。</p>
+              <h3 class="text-sm font-semibold">
+                最近动态
+              </h3>
+              <p class="mt-1 text-xs text-muted-foreground">
+                展示最新操作，帮助团队快速理解当前推进节奏。
+              </p>
             </div>
-            <UiButton variant="ghost" size="sm" class="text-xs" @click="goLogs">查看全部</UiButton>
+            <UiButton variant="ghost" size="sm" class="text-xs" @click="goLogs">
+              查看全部
+            </UiButton>
           </div>
 
           <div v-if="recentLogs.length === 0" class="mt-6 rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">

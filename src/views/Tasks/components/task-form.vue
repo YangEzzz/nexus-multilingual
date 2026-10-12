@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SidebarGroup } from '@/components/ui/sidebar'
 import { labels, priorities, statuses } from '../data/data'
 import { taskValidator } from '../validators/task.validator'
@@ -44,7 +44,7 @@ const onSubmit = handleSubmit((values) => {
 
 <template>
   <div>
-    <form class="w-2/3 space-y-6" @submit="onSubmit">
+    <form novalidate class="w-2/3 space-y-6" @submit="onSubmit">
       <FormField v-slot="{ componentField }" name="title" :validate-on-blur="!isFieldDirty">
         <FormItem>
           <FormLabel>Title</FormLabel>
@@ -59,7 +59,7 @@ const onSubmit = handleSubmit((values) => {
         <FormItem>
           <FormLabel>status</FormLabel>
           <FormControl>
-            <Select v-bind="componentField">
+            <UiSelect v-bind="componentField">
               <SelectTrigger class="w-[180px]">
                 <SelectValue placeholder="Select a status" />
               </SelectTrigger>
@@ -73,7 +73,7 @@ const onSubmit = handleSubmit((values) => {
                   </SelectItem>
                 </SidebarGroup>
               </SelectContent>
-            </Select>
+            </UiSelect>
           </FormControl>
           <FormDescription />
           <FormMessage />

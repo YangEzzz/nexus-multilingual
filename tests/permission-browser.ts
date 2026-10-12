@@ -120,7 +120,7 @@ const run = async () => {
     sidebarApp.use(pinia).use(router)
     sidebarApp.mount('#fixture')
     for (const role of [null, '', 'user', 'unknown', ...roles]) {
-      auth.user = role === null ? null : { role }
+      auth.user = role === null ? null : { id: 'fixture', role }
       await nextTick()
       for (const menu of menus) {
         const link = document.querySelector(`#fixture a[href="${menu.url}"]`)
@@ -133,7 +133,7 @@ const run = async () => {
     projectApp.mount('#fixture')
     await new Promise(resolve => setTimeout(resolve, 100))
     for (const role of roles) {
-      auth.user = { role }
+      auth.user = { id: 'fixture', role }
       await nextTick()
       const create = [...document.querySelectorAll('button')].find(el => el.textContent?.includes('新建项目'))!
       const edit = document.querySelector<HTMLButtonElement>('[aria-label="编辑权限测试项目"]')!
@@ -153,7 +153,7 @@ const run = async () => {
     document.querySelector<HTMLButtonElement>('tbody button[role="checkbox"]')!.click()
     await nextTick()
     for (const role of roles) {
-      auth.user = { role }
+      auth.user = { id: 'fixture', role }
       await nextTick()
       for (const [label, permission] of [
         ['新建词条', 'term.create'],
@@ -172,7 +172,7 @@ const run = async () => {
     tools.click()
     await new Promise(resolve => setTimeout(resolve, 100))
     for (const role of roles) {
-      auth.user = { role }
+      auth.user = { id: 'fixture', role }
       await nextTick()
       const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent?.includes('导入多语言 JSON'))!
       check(Boolean(item), `${role}: Portal 菜单渲染`)

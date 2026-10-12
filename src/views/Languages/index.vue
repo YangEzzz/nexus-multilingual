@@ -2,11 +2,12 @@
 import type { AvailableLanguage } from '@/lib/available-languages'
 import { Languages, Loader2, Pencil, Plus, RefreshCcw, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
-
 import { toast } from 'vue-sonner'
+import { createLanguage, deleteLanguage as requestDeleteLanguage, updateLanguage } from '@/api/languages'
+
 import { usePermission } from '@/composables/use-permission'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
-import { api } from '@/request'
+import { errorMessage } from '@/lib/errors'
 
 defineOptions({ name: 'AvailableLanguages' })
 
@@ -33,8 +34,8 @@ const loadLanguages = async () => {
   try {
     languages.value = await fetchAvailableLanguages()
   }
-  catch (error: any) {
-    loadError.value = error.message || '无法获取可选语言'
+  catch (error: unknown) {
+    loadError.value = errorMessage(error) || '无法获取可选语言'
   }
   finally {
     loading.value = false
@@ -83,16 +84,16 @@ const saveLanguage = async () => {
     return
   submitting.value = true
   try {
-    const url = editingLanguage.value
-      ? `/languages/${editingLanguage.value.id}/update`
-      : '/languages'
-    await api.post({ url, data: formData.value })
+    if (editingLanguage.value)
+      await updateLanguage(editingLanguage.value.id, { data: formData.value })
+    else
+      await createLanguage({ data: formData.value })
     toast.success(editingLanguage.value ? '可选语言已更新' : '可选语言已创建')
     showFormDialog.value = false
     await loadLanguages()
   }
-  catch (error: any) {
-    formError.value = error.message || '保存失败，请检查后重试。'
+  catch (error: unknown) {
+    formError.value = errorMessage(error) || '保存失败，请检查后重试。'
   }
   finally {
     submitting.value = false
@@ -115,13 +116,13 @@ const deleteLanguage = async () => {
   deleting.value = true
   deleteError.value = ''
   try {
-    await api.post({ url: `/languages/${deletingLanguage.value.id}/delete` })
+    await requestDeleteLanguage(deletingLanguage.value.id)
     toast.success('可选语言已删除')
     showDeleteDialog.value = false
     await loadLanguages()
   }
-  catch (error: any) {
-    deleteError.value = error.message || '删除失败，请检查后重试。'
+  catch (error: unknown) {
+    deleteError.value = errorMessage(error) || '删除失败，请检查后重试。'
   }
   finally {
     deleting.value = false

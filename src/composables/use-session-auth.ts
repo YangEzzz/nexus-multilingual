@@ -1,10 +1,12 @@
+import type { SessionUser } from '@/types/domain'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
+import { getSessionUser, logoutSession } from '@/api/auth'
 import { useAuthStore } from '@/store'
-import { authRequest, clearLegacyAuth } from '@/utils/session'
+import { clearLegacyAuth } from '@/utils/session'
 
-let profileRequest: Promise<any> | null = null
+let profileRequest: Promise<SessionUser | null> | null = null
 
 export function useSessionAuth() {
   const router = useRouter()
@@ -16,7 +18,7 @@ export function useSessionAuth() {
       return
     loading.value = true
     try {
-      await authRequest('/logout', {})
+      await logoutSession()
       store.isLogin = false
       store.user = null
       store.initialized = true
@@ -30,7 +32,7 @@ export function useSessionAuth() {
   async function getUserInfo() {
     if (!profileRequest) {
       clearLegacyAuth()
-      profileRequest = authRequest<any>('/me')
+      profileRequest = getSessionUser()
         .then((user) => {
           store.user = user
           store.isLogin = true

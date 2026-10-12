@@ -1,4 +1,4 @@
-import { api } from '@/request'
+import { listLanguages } from '@/api/languages'
 
 export interface AvailableLanguage {
   id: number
@@ -11,6 +11,6 @@ export interface AvailableLanguage {
 }
 
 export async function fetchAvailableLanguages(): Promise<AvailableLanguage[]> {
-  const response = await api.get<AvailableLanguage[]>({ url: '/languages' })
+  const response = await listLanguages<AvailableLanguage[]>()
   return response.data ?? []
 }

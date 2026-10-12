@@ -3,7 +3,7 @@ export interface PlaceholderDiff {
   extra: string[]
 }
 
-const PLACEHOLDER_RE = /\{[a-zA-Z0-9_.-]+\}/g
+const PLACEHOLDER_RE = /\{[\w.-]+\}/g
 
 export function extractPlaceholders(text = '') {
   return Array.from(new Set(text.match(PLACEHOLDER_RE) ?? [])).sort()

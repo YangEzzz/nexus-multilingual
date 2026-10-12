@@ -2,8 +2,8 @@
 import { CircleAlert, Eye, EyeOff, KeyRound, Loader2, Server, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
+import { deleteAISettings, getAISettings, saveAISettings } from '@/api/ai'
 import { usePermission } from '@/composables/use-permission'
-import { api } from '@/request'
 
 defineOptions({ name: 'AiSettings' })
 const { can } = usePermission()
@@ -38,7 +38,7 @@ async function loadSettings() {
     return
   loading.value = true
   try {
-    const response = await api.get<AISettings>({ url: '/ai/settings' })
+    const response = await getAISettings<AISettings>()
     settings.value = response.data
     model.value = response.data.model || ''
   }
@@ -65,8 +65,8 @@ async function saveSettings() {
 
   saving.value = true
   try {
-    const response = await api.post<AISettings>({
-      url: '/ai/settings',
+    const response = await saveAISettings<AISettings>({
+
       data: { api_key: apiKey.value.trim(), model: model.value.trim() },
     })
     settings.value = response.data
@@ -88,7 +88,7 @@ async function deleteSettings() {
     return
   deleting.value = true
   try {
-    await api.post({ url: '/ai/settings/delete' })
+    await deleteAISettings()
     settings.value = { configured: false, model: '', relay_base_url: relayBaseURL.value }
     apiKey.value = ''
     model.value = ''
@@ -109,7 +109,9 @@ onMounted(loadSettings)
   <main v-permission="'ai.settings'" class="mx-auto w-full max-w-4xl px-4 py-7 sm:px-6 lg:px-8">
     <div class="mb-7 space-y-2">
       <div class="flex flex-wrap items-center gap-3">
-        <h1 class="text-xl font-semibold tracking-tight text-foreground">AI 翻译设置</h1>
+        <h1 class="text-xl font-semibold tracking-tight text-foreground">
+          AI 翻译设置
+        </h1>
         <UiBadge :variant="configured ? 'secondary' : 'outline'" class="gap-1.5">
           <ShieldCheck v-if="configured" class="size-3" />
           {{ configured ? `已配置 ${settings?.masked_key || ''}` : '未配置' }}
@@ -138,8 +140,12 @@ onMounted(loadSettings)
               <KeyRound class="size-4" />
             </div>
             <div>
-              <UiCardTitle class="text-base">账号凭据</UiCardTitle>
-              <UiCardDescription class="mt-1">Key 会以加密形式保存；更新模型时可不重复填写已有的 Key。</UiCardDescription>
+              <UiCardTitle class="text-base">
+                账号凭据
+              </UiCardTitle>
+              <UiCardDescription class="mt-1">
+                Key 会以加密形式保存；更新模型时可不重复填写已有的 Key。
+              </UiCardDescription>
             </div>
           </div>
         </UiCardHeader>
@@ -148,7 +154,9 @@ onMounted(loadSettings)
             <div class="grid gap-2">
               <label for="ai-model" class="text-sm font-medium text-foreground">模型名称</label>
               <UiInput id="ai-model" v-model="model" autocomplete="off" placeholder="例如：gpt-4o-mini" :aria-invalid="Boolean(formError && !model.trim())" aria-describedby="ai-model-hint" />
-              <p id="ai-model-hint" class="text-xs leading-5 text-muted-foreground">填写中转站可用的完整模型标识。</p>
+              <p id="ai-model-hint" class="text-xs leading-5 text-muted-foreground">
+                填写中转站可用的完整模型标识。
+              </p>
             </div>
 
             <div class="grid gap-2">
@@ -163,7 +171,9 @@ onMounted(loadSettings)
                   <Eye v-else class="size-4" />
                 </UiButton>
               </div>
-              <p id="ai-key-hint" class="text-xs leading-5 text-muted-foreground">Key 仅提交至 Nexus 后端，不会写入 localStorage 或发送给浏览器外的直连接口。</p>
+              <p id="ai-key-hint" class="text-xs leading-5 text-muted-foreground">
+                Key 仅提交至 Nexus 后端，不会写入 localStorage 或发送给浏览器外的直连接口。
+              </p>
             </div>
 
             <div class="flex flex-wrap items-center gap-3 pt-1">
@@ -193,7 +203,6 @@ onMounted(loadSettings)
               </UiAlertDialog>
             </div>
           </form>
-
         </UiCardContent>
       </UiCard>
 
@@ -201,9 +210,15 @@ onMounted(loadSettings)
         <UiCardContent class="flex items-start gap-3 py-5">
           <Server class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div class="min-w-0">
-            <p class="text-sm font-medium text-foreground">固定中转站</p>
-            <p class="mt-1 break-all font-mono text-xs leading-5 text-muted-foreground">{{ relayBaseURL }}</p>
-            <p class="mt-1.5 text-xs leading-5 text-muted-foreground">地址由服务端统一管理，前端不提供修改入口。</p>
+            <p class="text-sm font-medium text-foreground">
+              固定中转站
+            </p>
+            <p class="mt-1 break-all font-mono text-xs leading-5 text-muted-foreground">
+              {{ relayBaseURL }}
+            </p>
+            <p class="mt-1.5 text-xs leading-5 text-muted-foreground">
+              地址由服务端统一管理，前端不提供修改入口。
+            </p>
           </div>
         </UiCardContent>
       </UiCard>

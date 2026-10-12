@@ -37,7 +37,7 @@ const onSubmit = handleSubmit((values) => {
       </UiDialogDescription>
     </UiDialogHeader>
 
-    <form class="space-y-4" @submit="onSubmit">
+    <form novalidate class="space-y-4" @submit="onSubmit">
       <FormField v-slot="{ componentField }" name="name">
         <FormItem>
           <FormLabel class="text-base">
