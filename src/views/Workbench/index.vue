@@ -656,8 +656,8 @@ function goToLastPage() {
 const statusOptions = [
   { value: 'draft', label: '草稿', color: 'bg-gray-500' },
   { value: 'pending', label: '待翻译', color: 'bg-yellow-500' },
-  { value: 'ready_review', label: '待校对', color: 'bg-sky-500' },
-  { value: 'review', label: '待发布', color: 'bg-blue-500' },
+  { value: 'ready_review', label: '待校对', color: 'bg-muted' },
+  { value: 'review', label: '待发布', color: 'bg-muted' },
   { value: 'published', label: '已发布', color: 'bg-green-500' },
 ]
 
@@ -1847,10 +1847,10 @@ function resetProjectState() {
 </script>
 
 <template>
-  <div class="flex min-h-[calc(100svh-3rem)] flex-col gap-4 p-4 md:min-h-svh lg:p-6">
-    <header class="shrink-0 space-y-4">
-      <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+  <div class="workspace-page flex min-h-[calc(100svh-3rem)] md:min-h-svh min-w-0 flex-col gap-5">
+    <header class="shrink-0 space-y-5">
+      <div class="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div class="flex min-w-0 flex-wrap gap-3 sm:items-center">
           <div class="shrink-0">
             <h1 class="text-2xl font-semibold tracking-tight text-foreground">
               词条工作台
@@ -1877,7 +1877,7 @@ function resetProjectState() {
               </UiButton>
             </UiDropdownMenuTrigger>
             <UiDropdownMenuContent align="start" class="w-56">
-              <UiDropdownMenuLabel class="text-xs text-gray-400">
+              <UiDropdownMenuLabel class="text-xs text-muted-foreground">
                 切换当前工作项目
               </UiDropdownMenuLabel>
               <UiDropdownMenuSeparator />
@@ -1893,7 +1893,7 @@ function resetProjectState() {
             </UiDropdownMenuContent>
           </UiDropdownMenu>
 
-          <div class="flex min-w-0 items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs">
+          <div class="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs">
             <span class="font-medium text-foreground">{{ targetLanguages.find(lang => lang.code === sourceLanguageCode)?.name || '源语言' }}</span>
             <span class="text-primary">→</span>
             <span class="truncate text-muted-foreground">{{ Math.max(targetLanguages.length - 1, 0) }} 个目标语种</span>
@@ -2072,31 +2072,26 @@ function resetProjectState() {
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 xl:max-w-2xl">
-        <div class="flex items-center justify-between rounded-lg bg-muted/55 px-3 py-2">
-          <span class="text-muted-foreground">词条总量</span>
-          <strong class="font-mono text-sm text-foreground">{{ projectSummary.total }}</strong>
+      <div class="metric-strip text-xs">
+        <div data-tone="info" class="flex items-center justify-between gap-3">
+          <span class="text-muted-foreground">词条总量</span><strong class="text-xl font-semibold tabular-nums">{{ projectSummary.total }}</strong>
         </div>
-        <div class="flex items-center justify-between rounded-lg bg-amber-500/8 px-3 py-2">
-          <span class="text-amber-700 dark:text-amber-300">待补译</span>
-          <strong class="font-mono text-sm text-amber-700 dark:text-amber-300">{{ pendingTermCount }}</strong>
+        <div data-tone="warning" class="flex items-center justify-between gap-3">
+          <span class="detail-text">待补译</span><strong class="text-xl font-semibold tabular-nums">{{ pendingTermCount }}</strong>
         </div>
-        <div class="flex items-center justify-between rounded-lg bg-sky-500/8 px-3 py-2">
-          <span class="text-sky-700 dark:text-sky-300">可校对</span>
-          <strong class="font-mono text-sm text-sky-700 dark:text-sky-300">{{ readyTermCount }}</strong>
+        <div data-tone="violet" class="flex items-center justify-between gap-3">
+          <span class="detail-text">可校对</span><strong class="text-xl font-semibold tabular-nums">{{ readyTermCount }}</strong>
         </div>
-        <div class="flex items-center gap-2 rounded-lg bg-emerald-500/8 px-3 py-2">
-          <span class="shrink-0 text-emerald-700 dark:text-emerald-300">已发布</span>
-          <div class="h-1.5 min-w-8 flex-1 overflow-hidden rounded-full bg-emerald-500/15">
-            <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${publishedRate}%` }" />
-          </div>
-          <strong class="font-mono text-sm text-emerald-700 dark:text-emerald-300">{{ publishedRate }}%</strong>
+        <div data-tone="success" class="flex items-center gap-3">
+          <span class="detail-text shrink-0">已发布</span><div class="h-1.5 min-w-8 flex-1 overflow-hidden rounded-full bg-muted">
+            <div class="detail-progress h-full rounded-full" :style="{ width: `${publishedRate}%` }" />
+          </div><strong class="text-xl font-semibold tabular-nums">{{ publishedRate }}%</strong>
         </div>
       </div>
     </header>
 
     <!-- 顶栏过滤器和批量操作栏 -->
-    <section aria-label="词条筛选与批量操作" class="shrink-0 overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+    <section aria-label="词条筛选与批量操作" class="shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       <div class="grid gap-3 p-3 lg:grid-cols-12 lg:p-4">
         <div class="relative lg:col-span-4">
           <label for="term-search" class="sr-only">搜索 Key 或模块</label>
@@ -2255,7 +2250,7 @@ function resetProjectState() {
               variant="outline"
               size="sm"
               :disabled="isAnyBulkActionBusy || reviewableSelectedCount === 0"
-              class="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="border-border text-foreground hover:bg-muted dark:hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
               @click="batchApproveReview"
             >
               <Loader2 v-if="isBulkActionBusy('approve_review')" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
@@ -2301,7 +2296,7 @@ function resetProjectState() {
         class="flex flex-wrap items-center justify-center gap-2 border-t border-primary/15 bg-primary/[0.04] px-3 py-2 text-sm text-muted-foreground"
       >
         <span>已选择当前页 {{ paginatedTerms.length }} 条。</span>
-        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 !text-indigo-600 font-medium underline decoration-indigo-400/70 underline-offset-4 hover:!text-indigo-700 hover:decoration-indigo-600 dark:!text-indigo-400 dark:hover:!text-indigo-300" @click="selectAllFilteredTerms">
+        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 !text-foreground font-medium underline decoration-indigo-400/70 underline-offset-4 hover:!text-foreground hover:decoration-indigo-600 dark:!text-foreground dark:hover:!text-foreground" @click="selectAllFilteredTerms">
           选择符合当前筛选条件的全部 {{ totalTerms }} 条
         </UiButton>
       </div>
@@ -2313,14 +2308,14 @@ function resetProjectState() {
           已选择符合当前筛选条件的全部 {{ selectedCount }} 条
           <template v-if="excludedTermIds.length > 0">（已排除 {{ excludedTermIds.length }} 条）</template>。
         </span>
-        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 !text-indigo-600 font-medium underline decoration-indigo-400/70 underline-offset-4 hover:!text-indigo-700 hover:decoration-indigo-600 dark:!text-indigo-400 dark:hover:!text-indigo-300" @click="clearSelectedTerms">
+        <UiButton variant="link" size="sm" class="h-auto px-1 py-0 !text-foreground font-medium underline decoration-indigo-400/70 underline-offset-4 hover:!text-foreground hover:decoration-indigo-600 dark:!text-foreground dark:hover:!text-foreground" @click="clearSelectedTerms">
           取消跨页全选
         </UiButton>
       </div>
     </section>
 
     <!-- 词条表格 -->
-    <section aria-label="词条列表" class="relative flex h-[clamp(620px,72svh,900px)] min-h-[620px] shrink-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+    <section aria-label="词条列表" class="translation-table relative flex h-[clamp(480px,66svh,900px)] min-h-[480px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       <div class="min-h-0 flex-1 overflow-hidden">
         <UiTable class="relative min-w-max">
           <UiTableCaption class="sr-only">
@@ -2367,7 +2362,7 @@ function resetProjectState() {
               :class="{
                 'bg-primary/[0.03] dark:bg-primary/[0.05]': isTermSelected(term),
                 'bg-amber-50/30 dark:bg-amber-920/10 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id),
-                'bg-emerald-50/80 dark:bg-emerald-950/20': recentlyCreatedTermIds.includes(String(term.id)),
+                'bg-muted dark:bg-muted': recentlyCreatedTermIds.includes(String(term.id)),
               }"
             >
               <!-- 多选列 -->
@@ -2586,10 +2581,10 @@ function resetProjectState() {
                   <div
                     class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors"
                     :class="[
-                      term.status === 'draft' ? 'bg-slate-50 text-slate-600 border-slate-200'
+                      term.status === 'draft' ? 'bg-muted text-foreground border-border'
                       : term.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200'
-                        : term.status === 'review' ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                          : 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                        : term.status === 'review' ? 'bg-muted text-foreground border-border'
+                          : 'bg-muted text-foreground border-border',
                     ]"
                   >
                     <span class="size-1.5 rounded-full" :class="getStatusColor(term.status)" />
@@ -2613,7 +2608,7 @@ function resetProjectState() {
                   </template>
                   <template v-else>
                     <div
-                      class="w-full min-h-[44px] p-1.5 text-xs break-words whitespace-pre-wrap rounded border border-transparent transition-colors group-hover/cell:bg-gray-50/80"
+                      class="w-full min-h-[44px] p-1.5 text-xs break-words whitespace-pre-wrap rounded border border-transparent transition-colors group-hover/cell:bg-muted/60"
                       :class="[
                         !term.translations[lang.code] ? 'text-muted-foreground/55' : 'text-foreground/80',
                         hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive/40 bg-destructive/5 text-destructive dark:text-destructive' : '',
@@ -2646,7 +2641,7 @@ function resetProjectState() {
             <UiTableRow v-if="totalTerms === 0 && !loadingTerms">
               <UiTableCell :colspan="targetLanguages.length + 6" class="h-[400px] text-center p-0 border-none hover:bg-transparent">
                 <div class="flex flex-col items-center justify-center gap-4 text-muted-foreground">
-                  <div class="flex size-14 items-center justify-center rounded-2xl border border-dashed bg-muted/40">
+                  <div class="flex size-14 items-center justify-center rounded-xl border border-dashed bg-muted/40">
                     <Search class="size-6 opacity-40" />
                   </div>
                   <div class="space-y-1">
@@ -2721,7 +2716,7 @@ function resetProjectState() {
 
       <!-- 绝对定位的 Empty / Loading 覆盖层，始终在视口水平居中，无视表格向右滚动 -->
       <div v-if="loadingTerms" class="absolute inset-0 top-[40px] z-20 flex items-center justify-center bg-card/75 backdrop-blur-[1px]" role="status" aria-live="polite">
-        <div class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-card p-6 text-muted-foreground shadow-lg">
+        <div class="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-card p-6 text-muted-foreground shadow-lg">
           <Loader2 class="size-8 animate-spin text-primary" />
           <p class="text-sm font-medium">
             正在加载词条数据...
@@ -2864,7 +2859,7 @@ function resetProjectState() {
                     <span v-if="batchRowErrors.get(row.clientId)" class="text-xs text-destructive">
                       {{ batchRowErrors.get(row.clientId) }}
                     </span>
-                    <span v-else class="text-xs text-emerald-600 dark:text-emerald-400">可以创建</span>
+                    <span v-else class="text-xs text-foreground dark:text-foreground">可以创建</span>
                   </UiTableCell>
                   <UiTableCell>
                     <UiButton
@@ -3027,7 +3022,7 @@ function resetProjectState() {
         </UiAlertDialogHeader>
         <UiAlertDialogFooter>
           <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-          <UiAlertDialogAction class="bg-indigo-600 hover:bg-indigo-700 text-white" @click="confirmDrawerPublish">
+          <UiAlertDialogAction class="bg-primary hover:bg-primary/90 text-primary-foreground" @click="confirmDrawerPublish">
             确认发布
           </UiAlertDialogAction>
         </UiAlertDialogFooter>
@@ -3184,11 +3179,11 @@ function resetProjectState() {
               <div class="space-y-1.5">
                 <div class="flex justify-between items-center group">
                   <code class="text-[11px] text-primary bg-primary/5 px-1 rounded">{description}</code>
-                  <span class="text-[10px] text-gray-400">词条的上下文描述</span>
+                  <span class="text-[10px] text-muted-foreground">词条的上下文描述</span>
                 </div>
                 <div class="flex justify-between items-center group">
                   <code class="text-[11px] text-primary bg-primary/5 px-1 rounded">{translations}</code>
-                  <span class="text-[10px] text-gray-400">当前已有的翻译参考</span>
+                  <span class="text-[10px] text-muted-foreground">当前已有的翻译参考</span>
                 </div>
               </div>
             </div>

@@ -22,6 +22,10 @@ const availableLanguages = ref<ProjectLanguage[]>([])
 const languagesLoading = ref(false)
 const languagesError = ref('')
 const searchQuery = ref('')
+function clearProjectSearch() {
+  searchQuery.value = ''
+  document.getElementById('project-search')?.focus()
+}
 
 // Dialog state
 const showDialog = ref(false)
@@ -193,46 +197,46 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
 </script>
 
 <template>
-  <div class="min-h-0 space-y-6 p-4 lg:p-6">
-    <header class="flex flex-col gap-5 rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] via-background to-background p-5 shadow-sm sm:p-6 lg:flex-row lg:items-end lg:justify-between">
-      <div class="min-w-0">
-        <div class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-primary">
-          <span class="size-1.5 rounded-full bg-primary" />
-          项目空间
-        </div>
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+  <div class="workspace-page min-h-0 space-y-6">
+    <header class="page-heading">
+      <div>
+        <p class="section-kicker mb-2">
           翻译项目
-        </h1>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          集中管理项目语言、词条内容和发布工作流，让每个翻译空间都有清晰的边界。
+        </p>
+        <h1>项目管理</h1>
+        <p class="mt-2 text-sm text-muted-foreground">
+          选择一个项目，继续录入、翻译和发布词条。
         </p>
       </div>
-
-      <div class="flex flex-wrap items-center gap-3">
-        <div class="rounded-2xl border border-border/70 bg-background/70 px-4 py-2.5 text-right">
-          <div class="font-mono text-lg font-semibold text-foreground">
-            {{ projects.length }}
-          </div>
-          <div class="text-[11px] text-muted-foreground">
-            个项目
-          </div>
-        </div>
-        <div class="rounded-2xl border border-border/70 bg-background/70 px-4 py-2.5 text-right">
-          <div class="font-mono text-lg font-semibold text-foreground">
-            {{ configuredLanguageCount }}
-          </div>
-          <div class="text-[11px] text-muted-foreground">
-            种已配置语言
-          </div>
-        </div>
-        <UiButton v-permission="'project.create'" class="rounded-xl" @click="openCreate">
-          <Plus class="mr-2 size-4" />
-          新建项目
-        </UiButton>
-      </div>
+      <UiButton v-permission="'project.create'" @click="openCreate">
+        <Plus class="size-4" />新建项目
+      </UiButton>
     </header>
+    <div class="metric-strip" aria-label="项目概览">
+      <div data-tone="info">
+        <p class="text-xs text-muted-foreground">
+          翻译项目
+        </p><p class="metric-value mt-2">
+          {{ loading || loadError ? '—' : projects.length }}
+        </p>
+      </div>
+      <div data-tone="violet">
+        <p class="text-xs text-muted-foreground">
+          已配置语言
+        </p><p class="metric-value mt-2">
+          {{ loading || loadError ? '—' : configuredLanguageCount }}
+        </p>
+      </div>
+      <div data-tone="success">
+        <p class="text-xs text-muted-foreground">
+          当前筛选结果
+        </p><p class="metric-value mt-2">
+          {{ loading || loadError ? '—' : filteredProjects.length }}
+        </p>
+      </div>
+    </div>
 
-    <section v-if="!loading && projects.length > 0" class="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4" aria-label="项目筛选">
+    <section v-if="!loading && projects.length > 0" class="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4" aria-label="项目筛选">
       <div class="relative min-w-0 flex-1 sm:max-w-md">
         <label for="project-search" class="sr-only">搜索项目</label>
         <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -242,7 +246,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
           placeholder="搜索项目名称、标识符或描述"
           class="h-10 rounded-xl bg-background pl-9 pr-9"
         />
-        <button v-if="searchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除项目搜索" @click="searchQuery = ''">
+        <button v-if="searchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除项目搜索" @click="clearProjectSearch">
           <X class="size-3.5" />
         </button>
       </div>
@@ -252,8 +256,8 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
       </div>
     </section>
 
-    <div v-if="loading" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" role="status" aria-live="polite" aria-label="正在加载项目">
-      <div v-for="index in 8" :key="index" class="overflow-hidden rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
+    <div v-if="loading" class="grid gap-3" role="status" aria-live="polite" aria-label="正在加载项目">
+      <div v-for="index in 8" :key="index" class="overflow-hidden rounded-xl border border-border/70 bg-card p-5 shadow-sm">
         <div class="flex items-start gap-3">
           <UiSkeleton class="size-10 rounded-xl" />
           <div class="min-w-0 flex-1 space-y-2">
@@ -272,8 +276,8 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
       </div>
     </div>
 
-    <div v-else-if="loadError" class="flex min-h-72 flex-col items-center justify-center gap-4 rounded-3xl border border-destructive/20 bg-destructive/[0.03] p-8 text-center" role="alert">
-      <div class="flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+    <div v-else-if="loadError" class="flex min-h-72 flex-col items-center justify-center gap-4 rounded-xl border border-destructive/20 bg-destructive/[0.03] p-8 text-center" role="alert">
+      <div class="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
         <RefreshCcw class="size-5" />
       </div>
       <div>
@@ -290,8 +294,8 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
       </UiButton>
     </div>
 
-    <div v-else-if="projects.length === 0" class="flex min-h-80 flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border bg-card/70 p-8 text-center">
-      <div class="flex size-14 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 text-primary">
+    <div v-else-if="projects.length === 0" class="flex min-h-80 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-card/70 p-8 text-center">
+      <div class="flex size-14 items-center justify-center rounded-xl border border-border bg-primary/10 text-primary">
         <Folder class="size-6" />
       </div>
       <div>
@@ -308,7 +312,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
       </UiButton>
     </div>
 
-    <div v-else-if="filteredProjects.length === 0" class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border bg-card/70 p-8 text-center">
+    <div v-else-if="filteredProjects.length === 0" class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-card/70 p-8 text-center">
       <Search class="size-8 text-muted-foreground/60" />
       <div>
         <h2 class="text-base font-semibold text-foreground">
@@ -318,37 +322,35 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
           换一个名称、标识符或描述关键词试试。
         </p>
       </div>
-      <UiButton variant="ghost" size="sm" @click="searchQuery = ''">
+      <UiButton variant="ghost" size="sm" @click="clearProjectSearch">
         清除搜索
       </UiButton>
     </div>
 
-    <div v-else class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div v-else class="grid gap-3">
       <article
         v-for="project in filteredProjects"
         :key="project.id"
-        class="group flex min-h-64 flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+        class="group flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-foreground/25 lg:flex-row lg:items-stretch"
       >
-        <div class="h-1 bg-gradient-to-r from-primary via-primary/70 to-primary/20" />
-
-        <div class="flex flex-1 flex-col gap-4 p-5">
+        <div class="grid min-w-0 flex-1 gap-4 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div class="flex items-start gap-3">
-            <div class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/10 text-primary">
+            <div data-tone="info" class="detail-icon flex size-10 shrink-0 items-center justify-center rounded-xl">
               <Folder class="size-4" />
             </div>
             <div class="min-w-0 flex-1">
-              <h2 class="truncate text-sm font-semibold text-foreground" :title="project.name">
+              <h2 class="truncate text-base font-semibold text-foreground" :title="project.name">
                 {{ project.name }}
               </h2>
               <code class="mt-1 block truncate font-mono text-[11px] text-muted-foreground" :title="project.code">{{ project.code }}</code>
             </div>
           </div>
 
-          <p class="line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
-            {{ project.description || '暂无描述，为项目补充背景与命名规范。' }}
+          <p class="line-clamp-2 text-sm leading-6 text-muted-foreground">
+            {{ project.description || '暂无项目描述' }}
           </p>
 
-          <div class="mt-auto flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <div class="flex flex-wrap items-center gap-3 text-xs sm:col-span-2 text-muted-foreground">
             <span class="inline-flex items-center gap-1 rounded-full bg-muted/70 px-2 py-1">
               <Languages class="size-3" />
               {{ project.languages?.length || 0 }} 种语言
@@ -360,7 +362,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
           </div>
         </div>
 
-        <div class="flex items-center gap-2 border-t border-border/70 bg-muted/20 px-4 py-3">
+        <div class="flex shrink-0 items-center gap-2 border-t border-border bg-muted/20 px-4 py-3 lg:w-56 lg:border-l lg:border-t-0">
           <UiButton class="min-w-0 flex-1 rounded-lg" size="sm" @click="enterWorkbench(project)">
             进入工作台
             <ArrowRight class="size-3.5" />

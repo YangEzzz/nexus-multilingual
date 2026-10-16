@@ -106,10 +106,10 @@ onMounted(loadSettings)
 </script>
 
 <template>
-  <main v-permission="'ai.settings'" class="mx-auto w-full max-w-4xl px-4 py-7 sm:px-6 lg:px-8">
+  <main v-permission="'ai.settings'" class="workspace-page w-full max-w-5xl">
     <div class="mb-7 space-y-2">
       <div class="flex flex-wrap items-center gap-3">
-        <h1 class="text-xl font-semibold tracking-tight text-foreground">
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
           AI 翻译设置
         </h1>
         <UiBadge :variant="configured ? 'secondary' : 'outline'" class="gap-1.5">
@@ -136,7 +136,7 @@ onMounted(loadSettings)
       <UiCard>
         <UiCardHeader class="border-b border-border/70">
           <div class="flex items-start gap-3">
-            <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
+            <div data-tone="violet" class="detail-icon mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md">
               <KeyRound class="size-4" />
             </div>
             <div>

@@ -29,7 +29,7 @@ Helios 项目详情的“统一登录接入”管理客户端、精确回调地�
 - Helios 后端接口：`POST /api/sso/exchange` 和 `/api/sso/identity`，使用 HTTP Basic 客户端凭证。
 - Nexus：`GET /api/v1/auth/csrf`，`POST /api/v1/auth/sso/start|cancel`，`GET /api/v1/auth/sso/callback|status`，`POST /api/v1/auth/logout`，以及受保护的用户资料接口。
 - 授权请求和登录事务有效期 10 分钟；授权码 60 秒，只能兑换一次，绑定客户端、回调地址及 PKCE S256。数据库行锁保证并发兑换只有一次成功。
-- 两端独立 HttpOnly、SameSite=Lax 会话 Cookie，有效期 8 小时；数据库只保存会话和授权码摘要。登录旋转旧会话。密码、客户端密钥和长期凭证不进入跳转 URL 或 localStorage。
+- 两端独立 HttpOnly、SameSite=Lax 会话 Cookie，自登录成功起固定有效 30 天，不随访问续期；相关 CSRF 和浏览器绑定 Cookie 同为 30 天。数据库只保存会话和授权码摘要。登录旋转旧会话。密码、客户端密钥和长期凭证不进入跳转 URL 或 localStorage。新有效期在对应后端部署或重启后，对重新登录创建的会话生效；既有会话不自动延长。
 - 写操作校验准确 Origin 和 CSRF Cookie/header。弹窗通知校验 Origin、窗口来源、事务标识；即使通知通过，也以 Nexus 后端状态和用户资料为准。
 - Nexus 每次写操作重新向 Helios 校验身份和角色；读操作至少每 5 分钟刷新。账号停用、角色撤销时会话失效；认证服务不可用时权限校验返回 503，拒绝继续执行。
 - 退出 Nexus 只结束 Nexus 会话，Helios 会话仍可复用。退出 Helios 结束其当前会话；这版不包含跨系统即时全局注销。

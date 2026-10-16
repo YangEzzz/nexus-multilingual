@@ -90,6 +90,8 @@ let dashboardRequest = 0
 const dashboard = ref<DashboardPayload | null>(null)
 const loadingProjects = ref(true)
 const loadingDashboard = ref(false)
+const projectLoadError = ref('')
+const dashboardError = ref('')
 
 const isLoading = computed(() => loadingProjects.value || loadingDashboard.value)
 const currentProject = computed(() => dashboard.value?.project ?? projects.value.find(project => project.id === selectedProjectId.value) ?? null)
@@ -134,42 +136,47 @@ const statCards = computed(() => {
       value: currentStats.published,
       hint: `${publishedRate.value}% 已完成`,
       icon: CheckCircle2,
-      tone: 'text-emerald-600',
-      bg: 'from-emerald-500/12 via-emerald-500/6 to-transparent',
-      border: 'border-emerald-200/70 dark:border-emerald-900/50',
+      tone: 'detail-text',
+      accent: 'success',
+      bg: 'bg-muted/30',
+      border: 'border-border',
     },
     {
       label: '待校对',
       value: currentStats.review,
       hint: `${focus.value?.terms_ready_for_review ?? 0} 条可处理`,
       icon: AlertCircle,
-      tone: 'text-sky-600',
-      bg: 'from-sky-500/12 via-sky-500/6 to-transparent',
-      border: 'border-sky-200/70 dark:border-sky-900/50',
+      tone: 'detail-text',
+      accent: 'info',
+      bg: 'bg-muted/30',
+      border: 'border-border',
     },
     {
       label: '待翻译',
       value: currentStats.pending,
       hint: `${focus.value?.terms_pending ?? 0} 条进行中`,
       icon: Clock3,
-      tone: 'text-amber-600',
-      bg: 'from-amber-500/12 via-amber-500/6 to-transparent',
-      border: 'border-amber-200/70 dark:border-amber-900/50',
+      tone: 'detail-text',
+      accent: 'warning',
+      bg: 'bg-muted/30',
+      border: 'border-border',
     },
     {
       label: '草稿',
       value: currentStats.draft,
       hint: `${focus.value?.draft_terms ?? 0} 条待补充`,
       icon: FileEdit,
-      tone: 'text-slate-600',
-      bg: 'from-slate-500/12 via-slate-500/6 to-transparent',
-      border: 'border-slate-200/70 dark:border-slate-800/70',
+      tone: 'detail-text',
+      accent: 'violet',
+      bg: 'bg-muted/30',
+      border: 'border-border',
     },
   ]
 })
 
 async function loadProjects() {
   loadingProjects.value = true
+  projectLoadError.value = ''
   try {
     const res = await listProjects<I18nProject[]>()
     projects.value = res.data ?? []
@@ -182,7 +189,8 @@ async function loadProjects() {
     }
   }
   catch (error: unknown) {
-    toast.error('加载项目失败', { description: errorMessage(error) })
+    projectLoadError.value = errorMessage(error, '无法获取项目列表，请重试。')
+    toast.error('加载项目失败', { description: projectLoadError.value })
   }
   finally {
     loadingProjects.value = false
@@ -196,6 +204,7 @@ async function loadDashboard() {
   const ticket = dashboardScope.request()
   const requestId = ++dashboardRequest
   loadingDashboard.value = true
+  dashboardError.value = ''
   try {
     const res = await getProjectDashboard<DashboardPayload>(ticket.context, { signal: ticket.signal })
     if (!ticket.isCurrent() || requestId !== dashboardRequest)
@@ -204,8 +213,10 @@ async function loadDashboard() {
     localStorage.setItem('dashboard_project_id', String(selectedProjectId.value))
   }
   catch (error: unknown) {
-    if (ticket.isCurrent() && requestId === dashboardRequest)
-      toast.error('加载仪表盘失败', { description: errorMessage(error) })
+    if (ticket.isCurrent() && requestId === dashboardRequest) {
+      dashboardError.value = errorMessage(error, '无法获取项目总览，请重试。')
+      toast.error('加载项目总览失败', { description: dashboardError.value })
+    }
   }
   finally {
     ticket.release()
@@ -271,11 +282,11 @@ onMounted(loadProjects)
 </script>
 
 <template>
-  <div class="min-h-0 space-y-6 p-4 lg:p-6">
+  <div class="workspace-page min-h-0 space-y-6">
     <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-          仪表盘
+          项目总览
         </h1>
         <p class="mt-1 text-sm text-muted-foreground">
           聚焦当前项目的翻译进度、阻塞点和最近动态。
@@ -283,7 +294,7 @@ onMounted(loadProjects)
       </div>
 
       <div class="flex items-center gap-2">
-        <UiButton variant="outline" size="icon" class="rounded-full" :disabled="isLoading" @click="loadDashboard">
+        <UiButton variant="outline" size="icon" aria-label="刷新项目总览" :disabled="isLoading" @click="loadDashboard">
           <RefreshCw class="size-4" :class="isLoading ? 'animate-spin' : ''" />
         </UiButton>
         <UiButton :disabled="!selectedProjectId" @click="goWorkbench">
@@ -295,7 +306,18 @@ onMounted(loadProjects)
 
     <DashboardSkeleton v-if="loadingProjects" show-project-list />
 
-    <div v-else-if="projects.length === 0" class="rounded-3xl border border-dashed bg-card/70 p-10 text-center">
+    <section v-else-if="projectLoadError" class="workspace-panel flex min-h-64 flex-col items-center justify-center gap-4 p-6 text-center" role="alert">
+      <AlertCircle class="size-6 text-destructive" /><h2 class="font-semibold">
+        项目列表加载失败
+      </h2><p class="text-sm text-muted-foreground">
+        {{ projectLoadError }}
+      </p>
+      <UiButton variant="outline" @click="loadProjects">
+        重新加载
+      </UiButton>
+    </section>
+
+    <div v-else-if="projects.length === 0" class="rounded-xl border border-dashed bg-card/70 p-10 text-center">
       <FolderKanban class="mx-auto mb-4 size-10 text-muted-foreground/60" />
       <h2 class="text-lg font-semibold">
         还没有翻译项目
@@ -313,7 +335,8 @@ onMounted(loadProjects)
         <button
           v-for="project in projects"
           :key="project.id"
-          class="rounded-full border px-4 py-2 text-sm transition-all"
+          class="rounded-lg border px-4 py-2 text-sm transition-colors"
+          :aria-pressed="selectedProjectId === project.id"
           :class="selectedProjectId === project.id
             ? 'border-primary bg-primary text-primary-foreground shadow-sm'
             : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'"
@@ -323,15 +346,22 @@ onMounted(loadProjects)
         </button>
       </div>
 
+      <UiAlert v-if="dashboardError" variant="destructive" role="alert">
+        <AlertCircle /><UiAlertTitle>项目总览加载失败</UiAlertTitle><UiAlertDescription>
+          {{ dashboardError }} <UiButton variant="outline" size="sm" :disabled="loadingDashboard" @click="loadDashboard">
+            重新加载
+          </UiButton>
+        </UiAlertDescription>
+      </UiAlert>
       <DashboardSkeleton v-if="loadingDashboard && !dashboard" />
 
       <template v-else-if="dashboard && currentProject && stats && focus">
         <div class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-          <section class="overflow-hidden rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/10 via-background to-background">
+          <section class="overflow-hidden rounded-xl border border-border bg-card">
             <div class="flex h-full flex-col gap-6 p-6">
               <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div class="space-y-2">
-                  <div class="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs text-primary">
+                  <div data-tone="info" class="detail-badge inline-flex items-center gap-2 rounded-md border px-3 py-1 text-xs">
                     <FolderKanban class="size-3.5" />
                     当前项目
                   </div>
@@ -349,7 +379,7 @@ onMounted(loadProjects)
                 </div>
 
                 <div class="grid gap-2 text-sm text-muted-foreground">
-                  <div class="rounded-2xl border bg-background/70 px-4 py-3">
+                  <div class="rounded-xl border bg-background/70 px-4 py-3">
                     <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">
                       最近活跃
                     </div>
@@ -357,7 +387,7 @@ onMounted(loadProjects)
                       {{ formatRelativeTime(dashboard.last_activity_at) }}
                     </div>
                   </div>
-                  <div class="rounded-2xl border bg-background/70 px-4 py-3">
+                  <div class="rounded-xl border bg-background/70 px-4 py-3">
                     <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">
                       最近更新
                     </div>
@@ -368,8 +398,8 @@ onMounted(loadProjects)
                 </div>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-3">
-                <div class="rounded-2xl border bg-background/75 p-4">
+              <div class="metric-strip">
+                <div class="min-w-0">
                   <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     词条总量
                   </div>
@@ -377,7 +407,7 @@ onMounted(loadProjects)
                     {{ stats.total }}
                   </div>
                 </div>
-                <div class="rounded-2xl border bg-background/75 p-4">
+                <div class="min-w-0">
                   <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     目标语种
                   </div>
@@ -388,7 +418,7 @@ onMounted(loadProjects)
                     源语言：{{ sourceLanguage?.name || '未设置' }}
                   </div>
                 </div>
-                <div class="rounded-2xl border bg-background/75 p-4">
+                <div class="min-w-0">
                   <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     整体发布率
                   </div>
@@ -396,57 +426,57 @@ onMounted(loadProjects)
                     {{ publishedRate }}%
                   </div>
                   <div class="mt-2 h-2 overflow-hidden rounded-full bg-primary/10">
-                    <div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${publishedRate}%` }" />
+                    <div data-tone="success" class="detail-progress h-full rounded-full transition-all" :style="{ width: `${publishedRate}%` }" />
                   </div>
                 </div>
               </div>
             </div>
           </section>
 
-          <section class="rounded-3xl border bg-card p-6 shadow-sm">
+          <section class="rounded-xl border bg-card p-6 shadow-sm">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-sm font-semibold">
                   当前关注点
                 </h3>
                 <p class="mt-1 text-xs text-muted-foreground">
-                  用最少信息先看清下一步要做什么。
+                  优先处理可校对词条，再补齐缺失译文。
                 </p>
               </div>
               <CircleDotDashed class="size-4 text-muted-foreground" />
             </div>
 
             <div class="mt-5 space-y-3">
-              <div class="flex items-start justify-between rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4 dark:border-sky-950 dark:bg-sky-950/20">
+              <div class="flex items-start justify-between rounded-xl border border-border bg-muted p-4 dark:border-border dark:bg-muted">
                 <div>
-                  <div class="text-sm font-medium text-sky-700 dark:text-sky-300">
+                  <div class="text-sm font-medium text-foreground dark:text-foreground">
                     优先校对
                   </div>
-                  <p class="mt-1 text-xs text-sky-700/80 dark:text-sky-300/80">
+                  <p class="mt-1 text-xs text-foreground dark:text-foreground">
                     已补全翻译、可以校对通过的词条
                   </p>
                 </div>
-                <div class="text-2xl font-semibold text-sky-700 dark:text-sky-300">
+                <div class="text-2xl font-semibold text-foreground dark:text-foreground">
                   {{ focus.terms_ready_for_review }}
                 </div>
               </div>
 
-              <div class="flex items-start justify-between rounded-2xl border border-amber-200/70 bg-amber-50/70 p-4 dark:border-amber-950 dark:bg-amber-950/20">
+              <div class="flex items-start justify-between rounded-xl border border-border bg-muted p-4 dark:border-border dark:bg-muted">
                 <div>
-                  <div class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                  <div class="text-sm font-medium text-foreground dark:text-foreground">
                     翻译进行中
                   </div>
-                  <p class="mt-1 text-xs text-amber-700/80 dark:text-amber-300/80">
+                  <p class="mt-1 text-xs text-foreground dark:text-foreground">
                     仍有语种缺口，需要继续补齐
                   </p>
                 </div>
-                <div class="text-2xl font-semibold text-amber-700 dark:text-amber-300">
+                <div class="text-2xl font-semibold text-foreground dark:text-foreground">
                   {{ focus.terms_pending }}
                 </div>
               </div>
 
               <div class="grid gap-3 sm:grid-cols-2">
-                <div class="rounded-2xl border p-4">
+                <div class="rounded-xl border p-4">
                   <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     24h 变更
                   </div>
@@ -454,9 +484,9 @@ onMounted(loadProjects)
                     {{ focus.recent_changes_24h }}
                   </div>
                 </div>
-                <div class="rounded-2xl border p-4">
+                <div class="rounded-xl border p-4">
                   <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    超 7 天未收口
+                    超过 7 天未完成
                   </div>
                   <div class="mt-2 text-2xl font-semibold">
                     {{ focus.stale_terms }}
@@ -468,7 +498,7 @@ onMounted(loadProjects)
         </div>
 
         <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <section class="rounded-3xl border bg-card p-6 shadow-sm">
+          <section class="rounded-xl border bg-card p-6 shadow-sm">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-sm font-semibold">
@@ -485,7 +515,8 @@ onMounted(loadProjects)
               <article
                 v-for="card in statCards"
                 :key="card.label"
-                class="rounded-2xl border bg-gradient-to-br p-4"
+                :data-tone="card.accent"
+                class="rounded-xl border bg-muted/30 p-4"
                 :class="[card.border, card.bg]"
               >
                 <div class="flex items-center justify-between">
@@ -502,7 +533,7 @@ onMounted(loadProjects)
             </div>
           </section>
 
-          <section class="rounded-3xl border bg-card p-6 shadow-sm">
+          <section class="rounded-xl border bg-card p-6 shadow-sm">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-sm font-semibold">
@@ -523,7 +554,7 @@ onMounted(loadProjects)
               >
                 <div class="flex h-full w-full items-end">
                   <div
-                    class="w-full rounded-t-xl bg-gradient-to-t from-primary to-primary/40 transition-all"
+                    class="w-full rounded-t-xl bg-primary/75 transition-all"
                     :style="{ height: trendBarHeight(point) }"
                   />
                 </div>
@@ -539,7 +570,7 @@ onMounted(loadProjects)
         </div>
 
         <div class="grid gap-4 xl:grid-cols-[1.05fr_0.95fr] xl:items-stretch">
-          <section class="flex min-h-0 flex-col rounded-3xl border bg-card p-6 shadow-sm xl:h-[44rem]">
+          <section class="flex min-h-0 flex-col rounded-xl border bg-card p-6 shadow-sm xl:h-[44rem]">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-sm font-semibold">
@@ -554,7 +585,7 @@ onMounted(loadProjects)
               </div>
             </div>
 
-            <div v-if="sortedLanguages.length === 0" class="mt-8 rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+            <div v-if="sortedLanguages.length === 0" class="mt-8 rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
               当前项目还没有配置语言。
             </div>
 
@@ -563,7 +594,7 @@ onMounted(loadProjects)
                 <article
                   v-for="language in sortedLanguages"
                   :key="language.code"
-                  class="rounded-2xl border p-4"
+                  class="rounded-xl border p-4"
                 >
                   <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div class="min-w-0">
@@ -592,8 +623,7 @@ onMounted(loadProjects)
 
                   <div class="mt-3 h-2 overflow-hidden rounded-full bg-muted">
                     <div
-                      class="h-full rounded-full transition-all"
-                      :class="language.progress >= 90 ? 'bg-emerald-500' : language.progress >= 60 ? 'bg-amber-500' : 'bg-rose-500'"
+                      data-tone="success" class="detail-progress h-full rounded-full transition-all"
                       :style="{ width: `${language.progress}%` }"
                     />
                   </div>
@@ -603,7 +633,7 @@ onMounted(loadProjects)
           </section>
 
           <div class="flex min-h-0 flex-col gap-4 overflow-hidden xl:h-[44rem]">
-            <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border bg-card p-6 shadow-sm">
+            <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card p-6 shadow-sm">
               <div class="flex items-center justify-between">
                 <div>
                   <h3 class="text-sm font-semibold">
@@ -625,7 +655,7 @@ onMounted(loadProjects)
                   <div
                     v-for="language in topAttentionLanguages"
                     :key="language.code"
-                    class="rounded-2xl border bg-muted/30 p-4"
+                    class="rounded-xl border bg-muted/30 p-4"
                   >
                     <div class="flex items-center justify-between">
                       <div>
@@ -645,7 +675,7 @@ onMounted(loadProjects)
               </div>
             </section>
 
-            <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border bg-card p-6 shadow-sm">
+            <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card p-6 shadow-sm">
               <div class="flex items-center justify-between">
                 <div>
                   <h3 class="text-sm font-semibold">
@@ -659,7 +689,7 @@ onMounted(loadProjects)
 
               <div class="mt-5 space-y-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
                 <button
-                  class="flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
                   @click="goWorkbench"
                 >
                   <div class="rounded-xl bg-primary/10 p-2 text-primary">
@@ -677,7 +707,7 @@ onMounted(loadProjects)
                 </button>
 
                 <button
-                  class="flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
                   @click="goLogs"
                 >
                   <div class="rounded-xl bg-primary/10 p-2 text-primary">
@@ -695,7 +725,7 @@ onMounted(loadProjects)
                 </button>
 
                 <button
-                  class="flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
                   @click="router.push('/projects')"
                 >
                   <div class="rounded-xl bg-primary/10 p-2 text-primary">
@@ -716,7 +746,7 @@ onMounted(loadProjects)
           </div>
         </div>
 
-        <section class="rounded-3xl border bg-card p-6 shadow-sm">
+        <section class="rounded-xl border bg-card p-6 shadow-sm">
           <div class="flex items-center justify-between">
             <div>
               <h3 class="text-sm font-semibold">
@@ -731,7 +761,7 @@ onMounted(loadProjects)
             </UiButton>
           </div>
 
-          <div v-if="recentLogs.length === 0" class="mt-6 rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          <div v-if="recentLogs.length === 0" class="mt-6 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
             暂无动态记录。
           </div>
 
@@ -739,7 +769,7 @@ onMounted(loadProjects)
             <article
               v-for="log in recentLogs"
               :key="log.id"
-              class="flex gap-4 rounded-2xl border p-4"
+              class="flex gap-4 rounded-xl border p-4"
             >
               <UiAvatar class="mt-0.5 size-10 shrink-0 border">
                 <UiAvatarImage :src="log.user?.avatar_url || ''" />

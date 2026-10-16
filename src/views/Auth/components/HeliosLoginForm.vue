@@ -8,7 +8,7 @@ const { login, cancel, loading, error } = useHeliosLogin()
 <template>
   <UiCard class="w-full">
     <UiCardHeader class="space-y-3">
-      <ShieldCheck class="size-8 text-primary" aria-hidden="true" />
+      <ShieldCheck data-tone="info" class="detail-text size-8" aria-hidden="true" />
       <UiCardTitle class="text-2xl tracking-tight">
         登录多语言工作台
       </UiCardTitle>

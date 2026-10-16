@@ -61,7 +61,7 @@ components:
 
 ### Creative North Star
 
-The product should feel like a well-organized translation editor: a quiet technical work surface where source text, target languages, validation, and publishing state can be compared without visual noise.
+The product shares Helios’ restrained black, white and gray visual family while remaining a well-organized translation editor: a quiet technical work surface where source text, target languages, validation, and publishing state can be compared without visual noise.
 
 ### Product context and register
 
@@ -77,7 +77,7 @@ The product should feel like a well-organized translation editor: a quiet techni
 
 ## Colors
 
-Use semantic runtime roles rather than raw feature colors for primary surfaces and controls. Background, foreground, muted, border, primary, and danger map directly to the CSS custom properties with the same role. Workflow states may use restrained amber, sky/indigo, and emerald tints, always paired with text or icons. Dark themes remap semantics without changing hierarchy.
+Use semantic runtime roles rather than raw feature colors for primary surfaces and controls. Background, foreground, muted, border, primary, and danger map directly to the CSS custom properties with the same role. Main surfaces and workflow summaries use neutral gray tones, matching Helios. Use small blue, green, amber and violet content accents for icons, badges, metric markers and progress; main navigation, card surfaces and primary actions remain neutral. Error and destructive states retain semantic red. Dark themes remap semantics without changing hierarchy.
 
 ## Typography
 
@@ -85,7 +85,7 @@ The interface uses the system sans stack for predictable Chinese and multilingua
 
 ## Layout
 
-The application shell uses a permanently expanded desktop sidebar and no global top utility header, keeping vertical space available for operational pages. Appearance controls live above the account area in the sidebar. On narrow screens the sidebar becomes an off-canvas navigation drawer opened from a minimal mobile-only bar. Each route owns its content padding; workbench pages use a bounded content area with one vertical owner. The workbench header and filter panel stay compact, while the table owns its horizontal and vertical overflow. At narrow widths controls reflow, while the comparison table retains explicit horizontal scrolling. Panel rhythm follows the existing 12–24px utility spacing used by shared components.
+The shell follows the Helios family: a neutral sidebar, no global utility header, and a pale gray workspace with white panels. Desktop navigation can collapse into an icon rail; users can resize the expanded sidebar from 220px to 360px (264px default), with keyboard controls and persistent local preference. Narrow screens use the shared off-canvas navigation drawer, opened by a single compact button without a top menu bar. Each route owns its content padding; workbench pages use a bounded content area with one vertical owner. The workbench header and filter panel stay compact, while the table owns its horizontal and vertical overflow. At narrow widths controls reflow, while the comparison table retains explicit horizontal scrolling. Panel rhythm follows the existing 12–24px utility spacing used by shared components.
 
 ## Elevation & Depth
 
@@ -93,7 +93,7 @@ Static hierarchy uses tonal surfaces and borders first. A restrained small shado
 
 ## Shapes
 
-Controls follow the runtime 10px radius. Major workbench panels use a slightly larger 14px radius; status indicators may use pills. Dense table cells stay rectangular so rows remain easy to compare.
+Controls follow the runtime 10px radius. Major workbench panels use the semantic radius-xl (base radius plus 4px); status indicators may use pills. Dense table cells stay rectangular so rows remain easy to compare.
 
 ## Components
 
@@ -107,7 +107,7 @@ Use one solid primary action per decision area. Secondary utilities use outline 
 
 ### Navigation and data display
 
-Desktop navigation remains fully expanded so labels are always visible; do not add a desktop collapse rail or duplicate utility header. The workbench header carries project context and the source-to-target language rail. Filters and bulk actions share one stable-height panel. Table headers remain visible while scrolling; identifier columns may freeze at desktop widths only. Keys and locale codes use monospace typography.
+Desktop navigation uses explicit labels when expanded and canonical icon tooltips when collapsed. Appearance and collapse controls have one owner in the sidebar footer. The workbench header carries project context and the source-to-target language rail. Filters and bulk actions share one stable-height panel. Table headers remain visible while scrolling; identifier columns may freeze at desktop widths only. Keys and locale codes use monospace typography.
 
 ### Forms and overlays
 
@@ -131,3 +131,13 @@ Use concise Simplified Chinese, explicit verbs, and consistent lifecycle vocabul
 - **Do:** Reuse semantic tokens and shared UI primitives across every workbench action.
 - **Don't:** Float bulk toolbars over navigation or content.
 - **Don't:** Replace missing content with ambiguous English placeholders or color-only status.
+
+## Helios family alignment (2026-10-14)
+
+The user requested a full UI refactor aligned with Helios. Project cards become compact directory rows; summaries use the shared metric-strip recipe; business pages use workspace-page spacing. Login uses a split composition with an original-to-translation-to-publication rail. Typography uses Segoe UI / Microsoft YaHei / system sans for interface and the existing monospace stack for identifiers. Semantic CSS remains canonical (Model B): src/style.css → Tailwind semantic utilities → shared shadcn-vue primitives; src/assets/themes.css remaps existing user-selected palettes. workspace-surface and panel-shadow derive from active semantic colors. Retain theme preferences and all permission, session, draft, import, export and release contracts.
+
+## 内容点缀色（2026-10-14）
+
+主体保持黑白灰，内容可用少量彩色点缀。info（蓝）用于项目与身份，success（绿）用于完成与启用，warning（琥珀）用于待处理，violet（紫）用于权限或 AI。颜色仅用于图标底、标签、细指标线、进度条和少量重点文字；不铺满卡片、不染色导航和主按钮。src/style.css owns --detail-\* and their dark adapters → data-tone → detail-icon/detail-text/detail-badge/detail-progress shared recipes. Labels/icons always carry the meaning independently of color.
+
+点缀采用鲜明色值而非暗灰色调：蓝 #3b82f6、绿 #10b981、橙 #f59e0b、紫 #8b5cf6。它们用于图标、进度和细标记；说明与状态文字使用 foreground，避免亮色小字在白底上降低可读性。

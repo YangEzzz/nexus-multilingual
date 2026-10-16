@@ -2,16 +2,12 @@
 import {
   ChevronsUpDown,
   LogOut,
-  UserRoundCog,
 } from 'lucide-vue-next'
 
-import ThemePopover from '@/components/custom-theme/theme-popover.vue'
-import ToggleTheme from '@/components/toggle-theme.vue'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -30,19 +26,12 @@ const { user } = defineProps<{
   }
 }>()
 
+const roleLabels: Record<string, string> = { admin: '管理员', developer: '开发者', translator: '翻译人员', productor: '产品人员', owner: '管理员' }
 const { logout } = useAuth()
 const { isMobile, open } = useSidebar()
 </script>
 
 <template>
-  <div class="flex min-h-10 items-center justify-between gap-3 px-2">
-    <span class="text-xs font-medium text-muted-foreground">外观设置</span>
-    <div class="flex shrink-0 items-center gap-1">
-      <ToggleTheme />
-      <ThemePopover />
-    </div>
-  </div>
-
   <SidebarMenu>
     <SidebarMenuItem>
       <DropdownMenu>
@@ -59,7 +48,7 @@ const { isMobile, open } = useSidebar()
             </Avatar>
             <div class="grid flex-1 text-sm leading-tight text-left">
               <span class="font-semibold truncate">{{ user.nickname || user.name }}</span>
-              <span class="text-xs truncate text-muted-foreground">{{ user.role || 'Member' }}</span>
+              <span class="text-xs truncate text-muted-foreground">{{ roleLabels[user.role || ''] || '成员' }}</span>
             </div>
             <ChevronsUpDown class="ml-auto size-4 opacity-50 transition-opacity group-hover:opacity-100" />
           </SidebarMenuButton>
@@ -80,22 +69,10 @@ const { isMobile, open } = useSidebar()
               </Avatar>
               <div class="grid flex-1 text-sm leading-tight text-left">
                 <span class="font-semibold truncate">{{ user.nickname || user.name }}</span>
-                <span class="text-xs truncate text-muted-foreground">{{ user.role || 'Member' }}</span>
+                <span class="text-xs truncate text-muted-foreground">{{ roleLabels[user.role || ''] || '成员' }}</span>
               </div>
             </div>
           </DropdownMenuLabel>
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              class="cursor-pointer transition-colors focus:bg-sidebar-accent"
-              @click="$router.push('/settings/')"
-            >
-              <UserRoundCog class="size-4 mr-2" />
-              个人设置
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
 

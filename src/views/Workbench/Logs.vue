@@ -131,9 +131,9 @@ const getActionTone = (action: string) => {
   if (action.includes('删除'))
     return 'bg-destructive/10 text-destructive'
   if (action.includes('发布'))
-    return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    return 'bg-muted text-foreground dark:text-foreground'
   if (action.includes('创建') || action.includes('录入'))
-    return 'bg-sky-500/10 text-sky-700 dark:text-sky-300'
+    return 'bg-muted text-foreground dark:text-foreground'
   if (action.includes('AI') || action.includes('翻译'))
     return 'bg-violet-500/10 text-violet-700 dark:text-violet-300'
   return 'bg-muted text-muted-foreground'
@@ -193,7 +193,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-0 space-y-6 p-4 lg:p-6">
+  <div class="workspace-page min-h-0 space-y-6">
     <header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex min-w-0 items-start gap-3">
         <UiButton variant="ghost" size="icon" class="mt-0.5 shrink-0" aria-label="返回词条工作台" @click="goBack">
@@ -218,7 +218,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="min-h-[30rem] overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+    <main class="min-h-[30rem] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       <div v-if="loading" class="flex min-h-[24rem] flex-col items-center justify-center px-6 text-center" role="status" aria-live="polite">
         <span class="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
           <Loader2 class="size-5 animate-spin" />

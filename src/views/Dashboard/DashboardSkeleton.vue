@@ -21,7 +21,7 @@ withDefaults(defineProps<{
     </div>
 
     <div class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-      <section class="rounded-3xl border border-primary/15 bg-card p-6">
+      <section class="rounded-xl border border-border bg-card p-6">
         <div class="flex flex-col gap-6">
           <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div class="w-full space-y-3">
@@ -34,20 +34,20 @@ withDefaults(defineProps<{
               </div>
             </div>
             <div class="grid w-full gap-2 md:max-w-36">
-              <UiSkeleton class="h-16 w-full rounded-2xl" />
-              <UiSkeleton class="h-16 w-full rounded-2xl" />
+              <UiSkeleton class="h-16 w-full rounded-xl" />
+              <UiSkeleton class="h-16 w-full rounded-xl" />
             </div>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-3">
-            <UiSkeleton class="h-24 rounded-2xl" />
-            <UiSkeleton class="h-24 rounded-2xl" />
-            <UiSkeleton class="h-24 rounded-2xl" />
+            <UiSkeleton class="h-24 rounded-xl" />
+            <UiSkeleton class="h-24 rounded-xl" />
+            <UiSkeleton class="h-24 rounded-xl" />
           </div>
         </div>
       </section>
 
-      <section class="rounded-3xl border bg-card p-6">
+      <section class="rounded-xl border bg-card p-6">
         <div class="flex items-center justify-between">
           <div class="space-y-2">
             <UiSkeleton class="h-4 w-24" />
@@ -56,18 +56,18 @@ withDefaults(defineProps<{
           <UiSkeleton class="size-4 rounded-full" />
         </div>
         <div class="mt-5 space-y-3">
-          <UiSkeleton class="h-20 rounded-2xl" />
-          <UiSkeleton class="h-20 rounded-2xl" />
+          <UiSkeleton class="h-20 rounded-xl" />
+          <UiSkeleton class="h-20 rounded-xl" />
           <div class="grid gap-3 sm:grid-cols-2">
-            <UiSkeleton class="h-20 rounded-2xl" />
-            <UiSkeleton class="h-20 rounded-2xl" />
+            <UiSkeleton class="h-20 rounded-xl" />
+            <UiSkeleton class="h-20 rounded-xl" />
           </div>
         </div>
       </section>
     </div>
 
     <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-      <section class="rounded-3xl border bg-card p-6">
+      <section class="rounded-xl border bg-card p-6">
         <div class="flex items-center justify-between">
           <div class="space-y-2">
             <UiSkeleton class="h-4 w-20" />
@@ -76,11 +76,11 @@ withDefaults(defineProps<{
           <UiSkeleton class="size-4 rounded-full" />
         </div>
         <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <UiSkeleton v-for="index in 4" :key="index" class="h-32 rounded-2xl" />
+          <UiSkeleton v-for="index in 4" :key="index" class="h-32 rounded-xl" />
         </div>
       </section>
 
-      <section class="rounded-3xl border bg-card p-6">
+      <section class="rounded-xl border bg-card p-6">
         <div class="flex items-center justify-between">
           <div class="space-y-2">
             <UiSkeleton class="h-4 w-32" />
@@ -95,7 +95,7 @@ withDefaults(defineProps<{
     </div>
 
     <div class="grid gap-4 xl:grid-cols-[1.05fr_0.95fr] xl:items-stretch">
-      <section class="flex min-h-0 flex-col rounded-3xl border bg-card p-6 xl:h-[44rem]">
+      <section class="flex min-h-0 flex-col rounded-xl border bg-card p-6 xl:h-[44rem]">
         <div class="flex items-center justify-between">
           <div class="space-y-2">
             <UiSkeleton class="h-4 w-24" />
@@ -104,12 +104,12 @@ withDefaults(defineProps<{
           <UiSkeleton class="h-3 w-20" />
         </div>
         <div class="mt-5 min-h-0 flex-1 space-y-4 overflow-hidden">
-          <UiSkeleton v-for="index in 5" :key="index" class="h-24 rounded-2xl" />
+          <UiSkeleton v-for="index in 5" :key="index" class="h-24 rounded-xl" />
         </div>
       </section>
 
       <div class="flex min-h-0 flex-col gap-4 overflow-hidden xl:h-[44rem]">
-        <section class="flex min-h-0 flex-1 flex-col rounded-3xl border bg-card p-6">
+        <section class="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-6">
           <div class="flex items-center justify-between">
             <div class="space-y-2">
               <UiSkeleton class="h-4 w-32" />
@@ -118,23 +118,23 @@ withDefaults(defineProps<{
             <UiSkeleton class="size-4 rounded-full" />
           </div>
           <div class="mt-5 space-y-3">
-            <UiSkeleton v-for="index in 3" :key="index" class="h-20 rounded-2xl" />
+            <UiSkeleton v-for="index in 3" :key="index" class="h-20 rounded-xl" />
           </div>
         </section>
 
-        <section class="flex min-h-0 flex-1 flex-col rounded-3xl border bg-card p-6">
+        <section class="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-6">
           <div class="space-y-2">
             <UiSkeleton class="h-4 w-20" />
             <UiSkeleton class="h-3 w-56" />
           </div>
           <div class="mt-5 space-y-3">
-            <UiSkeleton v-for="index in 3" :key="index" class="h-16 rounded-2xl" />
+            <UiSkeleton v-for="index in 3" :key="index" class="h-16 rounded-xl" />
           </div>
         </section>
       </div>
     </div>
 
-    <section class="rounded-3xl border bg-card p-6">
+    <section class="rounded-xl border bg-card p-6">
       <div class="flex items-center justify-between">
         <div class="space-y-2">
           <UiSkeleton class="h-4 w-20" />
@@ -143,7 +143,7 @@ withDefaults(defineProps<{
         <UiSkeleton class="h-8 w-16 rounded-lg" />
       </div>
       <div class="mt-6 space-y-4">
-        <UiSkeleton v-for="index in 3" :key="index" class="h-20 rounded-2xl" />
+        <UiSkeleton v-for="index in 3" :key="index" class="h-20 rounded-xl" />
       </div>
     </section>
   </div>

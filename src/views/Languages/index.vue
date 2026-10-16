@@ -136,7 +136,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-0 space-y-6 p-4 lg:p-6">
+  <div class="workspace-page min-h-0 space-y-6">
     <header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight text-foreground">
@@ -162,7 +162,30 @@ onMounted(() => {
       </UiTooltip>
     </header>
 
-    <section class="overflow-hidden rounded-3xl border border-border bg-card shadow-sm" aria-labelledby="language-list-title">
+    <div class="metric-strip" aria-label="语言库概览">
+      <div>
+        <p class="text-xs text-muted-foreground">
+          可选语言
+        </p><p class="metric-value mt-2">
+          {{ loading || loadError ? '—' : languages.length }}
+        </p>
+      </div>
+      <div>
+        <p class="text-xs text-muted-foreground">
+          已被项目使用
+        </p><p class="metric-value mt-2">
+          {{ loading || loadError ? '—' : languages.filter(language => language.usage_count > 0).length }}
+        </p>
+      </div>
+      <div>
+        <p class="text-xs text-muted-foreground">
+          尚未使用
+        </p><p class="metric-value mt-2">
+          {{ loading || loadError ? '—' : languages.filter(language => !language.usage_count).length }}
+        </p>
+      </div>
+    </div>
+    <section class="overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-labelledby="language-list-title">
       <div class="flex items-center justify-between border-b border-border/70 px-5 py-4">
         <div>
           <h2 id="language-list-title" class="font-medium text-foreground">
@@ -235,7 +258,9 @@ onMounted(() => {
                 {{ language.sort_order }}
               </UiTableCell>
               <UiTableCell class="font-medium">
-                {{ language.name }}
+                <div class="flex items-center gap-3">
+                  <span data-tone="info" class="detail-icon flex size-8 items-center justify-center rounded-lg font-mono text-xs uppercase">{{ language.code.slice(0, 2) }}</span>{{ language.name }}
+                </div>
               </UiTableCell>
               <UiTableCell><code class="rounded bg-muted px-2 py-1 text-xs">{{ language.code }}</code></UiTableCell>
               <UiTableCell>

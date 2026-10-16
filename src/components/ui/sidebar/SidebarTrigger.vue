@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import type { HTMLAttributes } from "vue"
-import { PanelLeft } from "lucide-vue-next"
-import { cn } from "@/lib/utils"
+import type { HTMLAttributes } from 'vue'
+import { PanelLeft } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
-import { useSidebar } from "./utils"
+import { cn } from '@/lib/utils'
+import { useSidebar } from './utils'
 
 const props = defineProps<{
-  class?: HTMLAttributes["class"]
+  class?: HTMLAttributes['class']
 }>()
 
 const { toggleSidebar } = useSidebar()
@@ -22,6 +22,6 @@ const { toggleSidebar } = useSidebar()
     @click="toggleSidebar"
   >
     <PanelLeft />
-    <span class="sr-only">Toggle Sidebar</span>
+    <span class="sr-only">展开或收起导航</span>
   </Button>
 </template>

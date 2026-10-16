@@ -46,3 +46,11 @@
 | Scrollbar       | `src/assets/scrollbar.css`                               | `DESIGN.md`           | geometry exceptions                       | 保持既有样式            |
 | CRUD            | 项目/语言/工作台页面和 `src/request/index.ts`            | 既有业务 API          | single / bulk                             | 权限浏览器回归及构建    |
 | Table Selection | 工作台既有选择缓存和 `src/components/data-table`         | 既有分页 API          | page / all-filtered                       | 本次保留既有行为        |
+
+## 工作空间外观与导航
+
+- layouts/index.vue owns localized document titles, the skip link and a mobile-only drawer trigger. There is no global top menu/header. AppSidebar owns Nexus branding, permission-filtered navigation, and the only appearance/collapse control location in its footer.
+- SidebarProvider / SidebarRail own collapse, mobile drawer and pointer/keyboard width control (220–360px, default 264px). Desktop width persists under nexus-sidebar-width; mobile navigation closes after choosing a route. Shortcuts never intercept text input or IME composition.
+- style.css owns workspace-page, metric-strip, semantic panel geometry, table density, focus and reduced-motion behavior. Editing overlays continue to use the canonical Dialog / Sheet / AlertDialog primitives and existing unsaved-change guards.
+- Project directory rows, dashboard panels, language tables, settings and workbench share neutral surfaces. Status labels and icons retain meaning without requiring color.
+- tests/ui-preview.html mounts real route components against in-memory API data for desktop, narrow, theme, loading/error/empty and overlay verification. It does not call live APIs.
