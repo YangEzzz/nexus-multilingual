@@ -24,6 +24,7 @@
 - `use-term-translation.ts` 统一行内和抽屉提示词、结果归属与状态策略。AI 结果仍须人工校对，未发布词条保持 pending；人工改动不得被旧响应覆盖。
 - `term-draft.ts` 同时恢复表格与跨页选择缓存，同一 ID 的实体引用保持一致。
 - `TermEditorSheet.vue` 和 `TermExportDialog.vue` 是编辑与导出的领域组件，基础控件继续使用 shadcn-vue。
+- “复制键值对”只处理打开弹窗时的选中范围（包括跨页选择和全筛选排除项），选择语言后预览并复制 JSON 成员片段；保留原始 Key，去掉模块包装和外层大括号。空译文跳过并显示数量，重复 Key 拒绝生成并提示按模块筛选。未保存的编辑须先保存或取消。`terms/export/copy` 的 `format: pairs` 是片段内容来源，`src/lib/clipboard.ts` 统一写入剪贴板；复制失败保留预览供手动复制。
 - 关闭抽屉、切项目和离开工作台前处理未保存修改；提交期间等待操作完成。确认框高于抽屉，取消确认后保留输入和焦点。
 - 编辑及未保存翻译期间冻结筛选与分页；后台刷新保留未提交翻译。
 - `use-term-import.ts` 管理文件输入和导入。对象仅接受严格 JSON，不执行代码；Excel 解析库按需加载。
@@ -49,8 +50,12 @@
 
 ## 工作空间外观与导航
 
+- `assets/scrollbar.css` 将最外层页面滚动统一交给 `#app`（100dvh、overflow-y:auto、scrollbar-gutter:stable）；html/body 不承担页面滚动。浮层 Portal 位于 body，与页面滚动容器分离；Reka UI 锁定 body 和背景指针交互时，页面滚动条保持可见，浮层内部正常滚动。`AppUiProvider.vue` 禁止额外 padding/margin 补偿。路由按 history position 保存、恢复 `#app` 滚动位置；打印恢复自然文档流。`tests/ui-preview.ts` 复用同一 Provider。
+
 - layouts/index.vue owns localized document titles, the skip link and a mobile-only drawer trigger. There is no global top menu/header. AppSidebar owns Nexus branding, permission-filtered navigation, and the only appearance/collapse control location in its footer.
 - SidebarProvider / SidebarRail own collapse, mobile drawer and pointer/keyboard width control (220–360px, default 264px). Desktop width persists under nexus-sidebar-width; mobile navigation closes after choosing a route. Shortcuts never intercept text input or IME composition.
 - style.css owns workspace-page, metric-strip, semantic panel geometry, table density, focus and reduced-motion behavior. Editing overlays continue to use the canonical Dialog / Sheet / AlertDialog primitives and existing unsaved-change guards.
-- Project directory rows, dashboard panels, language tables, settings and workbench share neutral surfaces. Status labels and icons retain meaning without requiring color.
+- Project directory rows, dashboard panels, language tables, settings and workbench share light semantic panels with teal selection and primary actions (or the user-selected alternate palette). Status labels and icons retain meaning without requiring color.
 - tests/ui-preview.html mounts real route components against in-memory API data for desktop, narrow, theme, loading/error/empty and overlay verification. It does not call live APIs.
+
+- `src/lib/source-language.ts` 统一工作台与总览的原文语种解析：显式 is_source 优先，历史项目延续 cn / zh / zh-CN / en / 首项的既有回退顺序。总览目标语种数量排除有效原文语种；优先关注只列出确实缺少译文的目标语种。

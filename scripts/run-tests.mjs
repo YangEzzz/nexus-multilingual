@@ -7,7 +7,7 @@ import { effectScope, reactive } from 'vue'
 import { checkAPIBoundaries } from './api-contracts.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const server = await createServer({ configFile: false, root, resolve: { alias: { '@': path.join(root, 'src') } }, server: { middlewareMode: true, watch: null } })
+const server = await createServer({ configFile: false, root, optimizeDeps: { noDiscovery: true, include: [] }, resolve: { alias: { '@': path.join(root, 'src') } }, server: { middlewareMode: true, watch: null } })
 let passed = 0
 async function check(name, test) {
   await test()
@@ -34,6 +34,17 @@ try {
   const requests = await server.ssrLoadModule('/src/composables/use-request-scope.ts')
   const projectSave = await server.ssrLoadModule('/src/lib/project-save.ts')
   const tables = await server.ssrLoadModule('/src/components/data-table/use-generate-vue-table.ts')
+  const { resolveSourceLanguage } = await server.ssrLoadModule('/src/lib/source-language.ts')
+  await check('legacy projects and explicit source languages resolve consistently', () => {
+    const legacy = [{ code: 'en', name: 'English' }, { code: 'cn', name: '简体中文' }, { code: 'de', name: 'Deutsch' }]
+    assert.equal(resolveSourceLanguage(legacy), legacy[1])
+    const configured = [...legacy, { code: 'de-DE', name: 'German source', is_source: true }]
+    assert.equal(resolveSourceLanguage(configured), configured[3])
+    assert.equal(resolveSourceLanguage([{ code: 'zh-CN', name: '中文' }])?.code, 'zh-CN')
+    assert.equal(resolveSourceLanguage([{ code: 'ar', name: 'Arabic' }])?.code, 'ar')
+    assert.equal(resolveSourceLanguage([]), undefined)
+    assert.equal(legacy.length, 3)
+  })
   await check('pasted JavaScript is rejected without execution', () => {
     globalThis.reviewMarker = false
     assert.throws(() => json.parsePastedObject('({x: (globalThis.reviewMarker = true)})'), /JSON/)

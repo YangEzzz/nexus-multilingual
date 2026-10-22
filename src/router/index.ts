@@ -132,12 +132,31 @@ const baseRoutes: RouteRecordRaw[] = [
 
 const publicRoutes = ['/auth/sign-in', '/auth/sign-in-2', '/auth/sign-up', '/auth/forgot-password', '/auth/otp', '/errors/401', '/errors/403', '/errors/404', '/errors/500', '/errors/503']
 
+// Vue Router's default scroll restoration targets window; the application now
+// scrolls #app so body locks can leave its scrollbar visible.
+const pageScrollPositions = new Map<number, { top: number, left: number }>()
+let currentHistoryPosition = window.history.state?.position ?? 0
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.VITE_APP_PUBLIC_PATH),
   routes: baseRoutes,
   scrollBehavior: (_, __, savedPosition) => {
-    return savedPosition || { top: 0, left: 0 }
+    const position = savedPosition
+      ? pageScrollPositions.get(window.history.state?.position) || { top: 0, left: 0 }
+      : { top: 0, left: 0 }
+    document.getElementById('app')?.scrollTo(position)
+    return false
   },
+})
+
+router.beforeEach(() => {
+  const viewport = document.getElementById('app')
+  if (viewport)
+    pageScrollPositions.set(currentHistoryPosition, { top: viewport.scrollTop, left: viewport.scrollLeft })
+})
+router.afterEach((_, __, failure) => {
+  if (!failure)
+    currentHistoryPosition = window.history.state?.position ?? 0
 })
 
 // 全局前置守卫

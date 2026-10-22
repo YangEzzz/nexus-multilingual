@@ -4,16 +4,16 @@ Nexus 使用 Helios 账号和 `nexus-multilingual` 项目角色。点击登录�
 
 ## 当前本地联调
 
-| 服务        | 地址                  | 数据库                       |
-| ----------- | --------------------- | ---------------------------- |
-| Nexus 前端  | http://localhost:5173 | —                            |
-| Nexus 后端  | http://127.0.0.1:3457 | 远程 `nexus_db`              |
-| Helios 前端 | http://localhost:5174 | —                            |
-| Helios 后端 | http://127.0.0.1:3456 | 同一远程服务器的 `system_db` |
+| 服务        | 地址                             | 数据库           |
+| ----------- | -------------------------------- | ---------------- |
+| Nexus 前端  | http://localhost:5173            | —                |
+| Nexus 后端  | http://127.0.0.1:3457            | 远程 `nexus_db`  |
+| Helios 前端 | https://helios.team-tool.top     | —                |
+| Helios 后端 | https://helios-api.team-tool.top | 线上 `system_db` |
 
 Helios 服务的 `.env` 与 Nexus 后端 `.env` 使用相同数据库服务器、端口和数据库账号，数据库名分别为 `system_db` 和 `nexus_db`。这些文件已被 Git 忽略；不需要安装或下载本地 PostgreSQL。Helios `.env` 优先于 `.env-production`；Nexus 保留 `.env-production` 优先的既有加载规则。环境变量优先于文件。
 
-四个仓库分别启动：两个后端执行 `go run ./cmd/api`（Helios）、`go run .`（Nexus）；两个前端执行 `pnpm dev --host localhost`。前端本地配置分别使用 `VITE_APP_API_BASE_URL=`（Helios）和 `VITE_APP_API_BASE_URL=/api/v1`（Nexus），Vite 将 `/api` 转发到对应后端。保持使用 `localhost`，不要交替使用 `127.0.0.1` 访问前端。
+本地只启动 Nexus：后端执行 `go run .`，前端执行 `pnpm dev --host localhost`。Nexus 前端使用 `VITE_APP_API_BASE_URL=/api/v1`，Vite 将 `/api` 转发到本地 Nexus 后端。Nexus 后端的 `HELIOS_BASE_URL` 和 `HELIOS_INTERNAL_URL` 均设置为 `https://helios-api.team-tool.top`，直接使用线上 Helios，无需启动本地 Helios。保留本地客户端 `nexus-multilingual-local` 及回调地址 `http://localhost:5173/api/v1/auth/sso/callback`；线上 Helios 必须登记该客户端和回调。保持使用 `localhost`，不要交替使用 `127.0.0.1` 访问前端。
 
 ## 数据库与接入配置
 

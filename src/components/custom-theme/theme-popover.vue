@@ -21,7 +21,7 @@ import ToggleColorMode from './toggle-color-mode.vue'
         <Paintbrush />
       </UiButton>
     </PopoverTrigger>
-    <PopoverContent align="end">
+    <PopoverContent align="end" class="max-h-[min(680px,calc(100svh-2rem))] overflow-y-auto">
       <CustomThemeTitle />
       <CustomColor />
       <CustomRadius />

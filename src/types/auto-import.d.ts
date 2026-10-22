@@ -13,6 +13,7 @@ declare global {
   const RADIUS: typeof import('../constants/themes').RADIUS
   const RouterPath: typeof import('../constants/route-path').RouterPath
   const THEMES: typeof import('../constants/themes').THEMES
+  const THEME_LABELS: typeof import('../constants/themes').THEME_LABELS
   const THEME_PRIMARY_COLORS: typeof import('../constants/themes').THEME_PRIMARY_COLORS
   const computed: typeof import('vue').computed
   const createApp: typeof import('vue').createApp

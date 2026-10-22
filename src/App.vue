@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import AppUiProvider from '@/components/AppUiProvider.vue'
 import Loading from '@/components/Loading.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { useAuth } from '@/composables/use-auth'
@@ -14,15 +15,17 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Toaster />
+  <AppUiProvider>
+    <Toaster />
 
-  <Suspense>
-    <router-view v-slot="{ Component, route }">
-      <component :is="Component" :key="route" />
-    </router-view>
+    <Suspense>
+      <router-view v-slot="{ Component, route }">
+        <component :is="Component" :key="route" />
+      </router-view>
 
-    <template #fallback>
-      <Loading />
-    </template>
-  </Suspense>
+      <template #fallback>
+        <Loading />
+      </template>
+    </Suspense>
+  </AppUiProvider>
 </template>

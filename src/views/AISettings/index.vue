@@ -109,7 +109,7 @@ onMounted(loadSettings)
   <main v-permission="'ai.settings'" class="workspace-page w-full max-w-5xl">
     <div class="mb-7 space-y-2">
       <div class="flex flex-wrap items-center gap-3">
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 class="text-xl font-semibold tracking-tight text-foreground">
           AI 翻译设置
         </h1>
         <UiBadge :variant="configured ? 'secondary' : 'outline'" class="gap-1.5">

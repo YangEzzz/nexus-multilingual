@@ -20,7 +20,7 @@ const emits = defineEmits<{
   'update:open': [open: boolean]
 }>()
 
-const isMobile = useMediaQuery('(max-width: 768px)')
+const isMobile = useMediaQuery('(width < 768px)')
 const openMobile = ref(false)
 const width = ref(SIDEBAR_DEFAULT_WIDTH)
 const resizing = ref(false)

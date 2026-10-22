@@ -18,8 +18,10 @@ import { useTermTranslation } from '@/composables/use-term-translation'
 import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from '@/constants/pagination'
 import { requestAITranslation } from '@/lib/ai'
 import { fetchAvailableLanguages } from '@/lib/available-languages'
+import { copyText } from '@/lib/clipboard'
 import { errorMessage } from '@/lib/errors'
 import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
+import { resolveSourceLanguage } from '@/lib/source-language'
 import { captureTermDraft, restoreTermDraft } from '@/lib/term-draft'
 import { DEFAULT_TRANSLATION_PROMPT, mapApiTerm, termUpdatePayload } from '@/lib/terms'
 import TermEditorSheet from './components/TermEditorSheet.vue'
@@ -89,14 +91,7 @@ interface LocaleRelease {
 const targetLanguages = ref<Language[]>([])
 const availableLanguages = ref<Language[]>([])
 
-const sourceLanguageCode = computed(() => {
-  return targetLanguages.value.find(lang => lang.is_source)?.code
-    || targetLanguages.value.find(lang => lang.code === 'cn')?.code
-    || targetLanguages.value.find(lang => lang.code === 'zh')?.code
-    || targetLanguages.value.find(lang => lang.code === 'zh-CN')?.code
-    || targetLanguages.value.find(lang => lang.code === 'en')?.code
-    || targetLanguages.value[0]?.code
-})
+const sourceLanguageCode = computed(() => resolveSourceLanguage(targetLanguages.value)?.code)
 
 function getPlaceholderSource(term: TermItem) {
   const sourceCode = sourceLanguageCode.value
@@ -1417,6 +1412,9 @@ async function submitBatchCreate() {
 // Focus logic removed as part of Global Edit Mode cleanup
 
 const showExportModal = ref(false)
+const exportVariant = ref<'json' | 'pairs'>('json')
+const exportScope = ref<TermBulkScope>({ mode: 'explicit', ids: [] })
+const exportScopeLabel = ref('')
 const selectedExportLangs = ref<string[]>([])
 const isExportingJson = ref(false)
 const isExportingExcel = ref(false)
@@ -1672,31 +1670,13 @@ async function copyLangJson(langCode: string, langName: string) {
     const response = await copyTermExport<{ content: string, count: number }>(projectId.value, {
 
       data: {
-        scope: getDataScope(),
+        scope: exportScope.value,
         language: langCode,
       },
     })
     const jsonStr = response.data.content
 
-    // Fallback for non-HTTPS (like local network IP) where navigator.clipboard is undefined
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(jsonStr)
-    }
-    else {
-      const textArea = document.createElement('textarea')
-      textArea.value = jsonStr
-      textArea.style.position = 'fixed'
-      textArea.style.left = '-999999px'
-      textArea.style.top = '-999999px'
-      document.body.appendChild(textArea)
-      textArea.focus()
-      textArea.select()
-
-      const successful = document.execCommand('copy')
-      document.body.removeChild(textArea)
-      if (!successful)
-        throw new Error('Fallback copy command failed')
-    }
+    await copyText(jsonStr)
 
     toast.success('复制成功', {
       description: `已复制【${langName}】的 ${response.data.count} 条词条 JSON。`,
@@ -1712,7 +1692,14 @@ async function copyLangJson(langCode: string, langName: string) {
   }
 }
 
-function openExportModal() {
+function openExportModal(variant: 'json' | 'pairs' = 'json') {
+  if (!can('term.export') || (variant === 'pairs' && (selectedCount.value === 0 || hasUnsavedChanges.value)))
+    return
+  exportVariant.value = variant
+  exportScope.value = structuredClone(getDataScope())
+  exportScopeLabel.value = selectedCount.value > 0
+    ? `已选中 ${selectedCount.value} 条词条`
+    : `当前筛选范围共 ${totalTerms.value} 条词条`
   selectedExportLangs.value = targetLanguages.value
     .map(lang => lang.code)
     .filter(code => !defaultExcludedLangs.includes(code))
@@ -1759,7 +1746,7 @@ async function confirmExport() {
     const result = await downloadTermsJson(projectId.value, {
 
       data: {
-        scope: getDataScope(),
+        scope: exportScope.value,
         languages: selectedExportLangs.value,
       },
     })
@@ -1852,7 +1839,7 @@ function resetProjectState() {
       <div class="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
         <div class="flex min-w-0 flex-wrap gap-3 sm:items-center">
           <div class="shrink-0">
-            <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+            <h1 class="text-xl font-semibold tracking-tight text-foreground">
               词条工作台
             </h1>
             <p class="mt-1 text-sm text-muted-foreground">
@@ -1865,12 +1852,12 @@ function resetProjectState() {
           <!-- Project Switcher -->
           <UiDropdownMenu>
             <UiDropdownMenuTrigger as-child>
-              <UiButton variant="outline" class="h-10 max-w-[300px] justify-start rounded-xl bg-background px-3">
+              <UiButton variant="outline" class="h-10 max-w-[300px] justify-start rounded-md bg-background px-3">
                 <span class="mr-2 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10">
                   <FolderKanban class="size-3.5 text-primary" />
                 </span>
                 <span class="min-w-0 text-left">
-                  <span class="block text-[10px] leading-none text-muted-foreground">当前项目</span>
+                  <span class="block text-xs leading-none text-muted-foreground">当前项目</span>
                   <span class="mt-1 block truncate text-sm font-medium leading-none">{{ currentProject?.name || '加载中...' }}</span>
                 </span>
                 <ChevronDown class="ml-auto size-4 shrink-0 text-muted-foreground" />
@@ -1920,7 +1907,7 @@ function resetProjectState() {
             <UiDropdownMenuTrigger as-child>
               <UiButton
                 variant="outline"
-                class="w-[7.5rem] justify-center gap-2 rounded-xl"
+                class="w-[7.5rem] justify-center gap-2 rounded-md"
                 :disabled="importingExcel"
                 :aria-label="importingExcel ? excelImportStage : '打开工作台工具箱'"
               >
@@ -1937,7 +1924,7 @@ function resetProjectState() {
               </UiDropdownMenuLabel>
               <UiDropdownMenuSeparator />
               <template v-if="can(['term.import', 'term.export'])">
-                <UiDropdownMenuLabel v-if="can('term.import')" class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                <UiDropdownMenuLabel v-if="can('term.import')" class="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">
                   批量录入
                 </UiDropdownMenuLabel>
                 <UiDropdownMenuItem v-permission="'term.import'" class="items-start gap-3 px-2 py-2.5" :disabled="importingJson || isGlobalEditing" @click="triggerJsonImport">
@@ -1965,10 +1952,10 @@ function resetProjectState() {
                   </span>
                 </UiDropdownMenuItem>
                 <UiDropdownMenuSeparator v-if="can('term.import')" />
-                <UiDropdownMenuLabel v-if="can('term.export')" class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                <UiDropdownMenuLabel v-if="can('term.export')" class="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">
                   数据导出
                 </UiDropdownMenuLabel>
-                <UiDropdownMenuItem v-permission="'term.export'" class="items-start gap-3 px-2 py-2.5" @click="openExportModal">
+                <UiDropdownMenuItem v-permission="'term.export'" class="items-start gap-3 px-2 py-2.5" @click="openExportModal()">
                   <Download class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0">
                     <span class="block text-sm font-medium">导出多语言 JSON</span>
@@ -1993,7 +1980,7 @@ function resetProjectState() {
                 </span>
               </UiDropdownMenuItem>
               <UiDropdownMenuSeparator />
-              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+              <UiDropdownMenuLabel class="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">
                 词条与项目
               </UiDropdownMenuLabel>
               <UiDropdownMenuItem v-permission="'term.create'" class="items-start gap-3 px-2 py-2.5" :disabled="isGlobalEditing" @click="openBatchAddDialog">
@@ -2028,7 +2015,7 @@ function resetProjectState() {
             v-if="!isGlobalEditing"
             v-permission="'term.edit'"
             variant="secondary"
-            class="rounded-xl border-primary/20 text-primary hover:bg-primary/5"
+            class="rounded-md border-primary/20 text-primary hover:bg-primary/5"
             @click="enterEditMode"
           >
             <Edit3 class="w-4 h-4 mr-2" />
@@ -2050,7 +2037,7 @@ function resetProjectState() {
               variant="default"
               size="sm"
               :disabled="isSavingBatch"
-              class="shadow-sm"
+              class="shadow-xs"
               @click="saveEditMode"
             >
               <Loader2 v-if="isSavingBatch" class="w-4 h-4 mr-2 animate-spin" />
@@ -2063,7 +2050,7 @@ function resetProjectState() {
             v-permission="'term.create'"
             variant="default"
             :disabled="isGlobalEditing"
-            class="rounded-xl"
+            class="rounded-md"
             @click="addNewTerm"
           >
             <Plus class="w-4 h-4 mr-2" />
@@ -2091,7 +2078,7 @@ function resetProjectState() {
     </header>
 
     <!-- 顶栏过滤器和批量操作栏 -->
-    <section aria-label="词条筛选与批量操作" class="shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <section aria-label="词条筛选与批量操作" class="shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       <div class="grid gap-3 p-3 lg:grid-cols-12 lg:p-4">
         <div class="relative lg:col-span-4">
           <label for="term-search" class="sr-only">搜索 Key 或模块</label>
@@ -2132,7 +2119,7 @@ function resetProjectState() {
         </div>
 
         <UiSelect v-model="selectedModule" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0" class="lg:col-span-2">
-          <UiSelectTrigger aria-label="按模块筛选" class="h-10 w-full rounded-xl bg-background lg:col-span-2">
+          <UiSelectTrigger aria-label="按模块筛选" class="h-10 w-full rounded-md bg-background lg:col-span-2">
             <UiSelectValue placeholder="选择模块" />
           </UiSelectTrigger>
           <UiSelectContent>
@@ -2146,7 +2133,7 @@ function resetProjectState() {
         </UiSelect>
 
         <UiSelect v-model="selectedStatus" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0">
-          <UiSelectTrigger aria-label="按状态筛选" class="h-10 w-full rounded-xl bg-background lg:col-span-2">
+          <UiSelectTrigger aria-label="按状态筛选" class="h-10 w-full rounded-md bg-background lg:col-span-2">
             <UiSelectValue placeholder="选择状态" />
           </UiSelectTrigger>
           <UiSelectContent>
@@ -2203,8 +2190,12 @@ function resetProjectState() {
           <UiSeparator class="h-5 mx-1" orientation="vertical" />
 
           <div class="flex items-center gap-x-2 whitespace-nowrap">
+            <UiButton v-permission="'term.export'" variant="outline" size="sm" :disabled="hasUnsavedChanges" @click="openExportModal('pairs')">
+              <Copy class="mr-1.5 size-3.5" />
+              复制键值对
+            </UiButton>
             <!-- Split Batch Translate Button: Developer cannot self-translate -->
-            <div v-permission="'term.translate'" class="inline-flex items-center rounded-md shadow-sm">
+            <div v-permission="'term.translate'" class="inline-flex items-center rounded-md shadow-xs">
               <UiButton v-permission="'term.translate'" variant="default" size="sm" :disabled="isBatchTranslating" class="rounded-r-none" @click="batchTranslate()">
                 <Loader2 v-if="isBatchTranslating" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
                 <Wand2 v-else class="w-3.5 h-3.5 mr-1.5" />
@@ -2315,11 +2306,20 @@ function resetProjectState() {
     </section>
 
     <!-- 词条表格 -->
-    <section aria-label="词条列表" class="translation-table relative flex h-[clamp(480px,66svh,900px)] min-h-[480px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <section aria-label="词条列表" class="translation-table relative flex h-[clamp(480px,66svh,900px)] min-h-[480px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       <div class="min-h-0 flex-1 overflow-hidden">
-        <UiTable class="relative min-w-max">
+        <UiTable class="relative min-w-full table-fixed" :style="{ width: `${756 + targetLanguages.length * 260}px` }">
+          <colgroup>
+            <col style="width: 40px">
+            <col style="width: 96px">
+            <col style="width: 220px">
+            <col style="width: 112px">
+            <col v-for="lang in targetLanguages" :key="lang.code" style="width: 260px">
+            <col style="width: 144px">
+            <col style="width: 144px">
+          </colgroup>
           <UiTableCaption class="sr-only">
-            当前项目的多语言词条、流程状态与更新时间
+            当前项目的多语言词条、流程状态与更新时间。长译文最多显示四行，打开词条详情查看全文。
           </UiTableCaption>
           <UiTableHeader class="sticky top-0 z-20 bg-muted/95 backdrop-blur supports-backdrop-filter:bg-muted/80">
             <UiTableRow class="hover:bg-transparent">
@@ -2342,7 +2342,7 @@ function resetProjectState() {
               <UiTableHead v-for="lang in targetLanguages" :key="lang.code" class="min-w-[220px] py-2">
                 <div class="flex items-center gap-2">
                   <span class="font-medium text-foreground/80">{{ lang.name }}</span>
-                  <span class="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{{ lang.code }}</span>
+                  <span class="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{{ lang.code }}</span>
                   <span v-if="lang.code === sourceLanguageCode" class="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary">源</span>
                 </div>
               </UiTableHead>
@@ -2361,7 +2361,7 @@ function resetProjectState() {
               class="group border-b border-border/70 transition-colors hover:bg-muted/35"
               :class="{
                 'bg-primary/[0.03] dark:bg-primary/[0.05]': isTermSelected(term),
-                'bg-amber-50/30 dark:bg-amber-920/10 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id),
+                'bg-amber-50/30 dark:bg-amber-950/20 shadow-[inset_2px_0_0_0_#f59e0b]': stagedChangeOriginals.has(term.id),
                 'bg-muted dark:bg-muted': recentlyCreatedTermIds.includes(String(term.id)),
               }"
             >
@@ -2498,7 +2498,7 @@ function resetProjectState() {
                           </UiAlertDialogHeader>
                           <UiAlertDialogFooter>
                             <UiAlertDialogCancel>取消</UiAlertDialogCancel>
-                            <UiAlertDialogAction v-permission="'term.delete'" class="bg-destructive text-white hover:bg-destructive/90" @click="deleteTerm(term.id)">
+                            <UiAlertDialogAction v-permission="'term.delete'" class="bg-destructive text-destructive-foreground hover:bg-destructive/90" @click="deleteTerm(term.id)">
                               确认删除
                             </UiAlertDialogAction>
                           </UiAlertDialogFooter>
@@ -2529,7 +2529,7 @@ function resetProjectState() {
                         <UiInput
                           v-model="term.module"
                           :disabled="!can('term.structure')"
-                          class="h-6 w-16 text-[10px] font-mono text-primary bg-background border-primary/20 shrink-0 px-1"
+                          class="h-6 w-16 text-xs font-mono text-primary bg-background border-primary/20 shrink-0 px-1"
                           placeholder="模块"
                         />
                         <UiInput
@@ -2562,12 +2562,12 @@ function resetProjectState() {
                       <UiInput
                         v-model="term.description"
                         :disabled="!can('term.description')"
-                        class="h-5 text-[10px] w-full px-1 border-gray-100 dark:border-zinc-800 bg-background/50 focus:bg-background"
+                        class="h-5 text-xs w-full px-1 border-gray-100 dark:border-zinc-800 bg-background/50 focus:bg-background"
                         placeholder="添加描述..."
                       />
                     </template>
                     <template v-else-if="term.description">
-                      <p class="line-clamp-1 truncate px-0.5 text-[11px] leading-tight text-muted-foreground" :title="term.description">
+                      <p class="line-clamp-1 truncate px-0.5 text-xs leading-tight text-muted-foreground" :title="term.description">
                         {{ term.description }}
                       </p>
                     </template>
@@ -2576,13 +2576,13 @@ function resetProjectState() {
               </UiTableCell>
 
               <!-- 状态列 -->
-              <UiTableCell class="align-top p-3 text-center w-32" :class="{ 'bg-primary/[0.02]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
+              <UiTableCell class="align-top p-3 text-center w-28" :class="{ 'bg-primary/[0.02]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
                 <div class="flex justify-center pt-1">
                   <div
-                    class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors"
+                    class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors"
                     :class="[
                       term.status === 'draft' ? 'bg-muted text-foreground border-border'
-                      : term.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : term.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
                         : term.status === 'review' ? 'bg-muted text-foreground border-border'
                           : 'bg-muted text-foreground border-border',
                     ]"
@@ -2594,13 +2594,13 @@ function resetProjectState() {
               </UiTableCell>
 
               <!-- 多语言翻译列 -->
-              <UiTableCell v-for="lang in targetLanguages" :key="lang.code" class="align-top p-2 group/cell" :class="{ 'bg-primary/[0.01]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
+              <UiTableCell v-for="lang in targetLanguages" :key="lang.code" class="align-top p-2 whitespace-normal [overflow-wrap:anywhere] group/cell" :class="{ 'bg-primary/[0.01]': (isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id) }">
                 <div class="min-h-[44px] relative">
                   <template v-if="(isGlobalEditing && isTermSelected(term) && term.status !== 'published') || stagedChangeOriginals.has(term.id)">
                     <UiTextarea
                       v-model="term.translations[lang.code]"
                       :disabled="!can('term.translate')"
-                      class="w-full min-h-[44px] p-1.5 text-xs shadow-none bg-background border-primary/20 focus-visible:ring-1 focus-visible:ring-primary/20 resize-none transition-all leading-relaxed"
+                      class="w-full min-h-[44px] p-1.5 text-sm shadow-none bg-background border-primary/20 focus-visible:ring-1 focus-visible:ring-primary/20 resize-none transition-all leading-relaxed"
                       :class="hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive focus-visible:ring-destructive/30' : ''"
                       :placeholder="`输入 ${lang.name}...`"
                       @update:model-value="handleTranslationUpdate(term)"
@@ -2608,7 +2608,7 @@ function resetProjectState() {
                   </template>
                   <template v-else>
                     <div
-                      class="w-full min-h-[44px] p-1.5 text-xs break-words whitespace-pre-wrap rounded border border-transparent transition-colors group-hover/cell:bg-muted/60"
+                      class="w-full min-h-[44px] p-1.5 text-sm leading-relaxed break-words whitespace-pre-wrap line-clamp-4 rounded border border-transparent transition-colors group-hover/cell:bg-muted/60"
                       :class="[
                         !term.translations[lang.code] ? 'text-muted-foreground/55' : 'text-foreground/80',
                         hasTranslationPlaceholderMismatch(term, lang.code) ? 'border-destructive/40 bg-destructive/5 text-destructive dark:text-destructive' : '',
@@ -2617,7 +2617,7 @@ function resetProjectState() {
                       {{ term.translations[lang.code] || '尚未填写' }}
                     </div>
                   </template>
-                  <p v-if="hasTranslationPlaceholderMismatch(term, lang.code)" class="mt-1 text-[10px] leading-tight text-destructive">
+                  <p v-if="hasTranslationPlaceholderMismatch(term, lang.code)" class="mt-1 text-xs leading-tight text-destructive">
                     <span v-if="getTranslationPlaceholderDiff(term, lang.code).missing.length">
                       缺少 {{ getTranslationPlaceholderDiff(term, lang.code).missing.join(', ') }}
                     </span>
@@ -2670,6 +2670,7 @@ function resetProjectState() {
       <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-4 py-3 text-sm">
         <div class="text-xs text-muted-foreground">
           共 {{ totalTerms }} 条
+          <span class="hidden sm:inline"> · 长译文可在词条详情查看</span>
           <template v-if="totalTerms > 0">
             ，当前 {{ pageStart }}-{{ pageEnd }} 条
           </template>
@@ -2941,7 +2942,7 @@ function resetProjectState() {
         <div v-if="bulkPreview" class="space-y-3 py-1">
           <div class="grid grid-cols-3 gap-2" aria-label="批量操作预检查结果">
             <div class="rounded-lg border bg-muted/40 px-3 py-2">
-              <p class="text-[11px] text-muted-foreground">
+              <p class="text-xs text-muted-foreground">
                 选中范围
               </p>
               <p class="mt-0.5 font-mono text-lg font-semibold">
@@ -2949,7 +2950,7 @@ function resetProjectState() {
               </p>
             </div>
             <div class="rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2">
-              <p class="text-[11px] text-muted-foreground">
+              <p class="text-xs text-muted-foreground">
                 本次执行
               </p>
               <p class="mt-0.5 font-mono text-lg font-semibold text-primary">
@@ -2957,7 +2958,7 @@ function resetProjectState() {
               </p>
             </div>
             <div class="rounded-lg border bg-muted/40 px-3 py-2">
-              <p class="text-[11px] text-muted-foreground">
+              <p class="text-xs text-muted-foreground">
                 自动跳过
               </p>
               <p class="mt-0.5 font-mono text-lg font-semibold">
@@ -3142,7 +3143,7 @@ function resetProjectState() {
       </UiAlertDialogContent>
     </UiAlertDialog>
 
-    <TermExportDialog v-model:open="showExportModal" v-model:selected="selectedExportLangs" :languages="targetLanguages" :busy="isExportingJson" :copying-language="copyingLanguageCode" @export="confirmExport" @copy="copyLangJson" />
+    <TermExportDialog v-model:open="showExportModal" v-model:selected="selectedExportLangs" :project-id="projectId" :scope="exportScope" :scope-label="exportScopeLabel" :variant="exportVariant" :languages="targetLanguages" :busy="isExportingJson" :copying-language="copyingLanguageCode" @export="confirmExport" @copy="copyLangJson" />
     <!-- 全局提示词设置模态框 -->
     <UiDialog :open="showSettingsModal" @update:open="val => showSettingsModal = val">
       <UiDialogContent class="sm:max-w-2xl">
@@ -3160,7 +3161,7 @@ function resetProjectState() {
           <div class="space-y-2">
             <UiLabel class="text-sm font-bold flex justify-between items-center">
               全局默认提示词 (Default Prompt)
-              <UiButton variant="ghost" size="sm" class="h-6 text-[10px] text-muted-foreground hover:text-primary" @click="globalPrompt = DEFAULT_TRANSLATION_PROMPT">
+              <UiButton variant="ghost" size="sm" class="h-6 text-xs text-muted-foreground hover:text-primary" @click="globalPrompt = DEFAULT_TRANSLATION_PROMPT">
                 恢复默认
               </UiButton>
             </UiLabel>
@@ -3178,12 +3179,12 @@ function resetProjectState() {
               </p>
               <div class="space-y-1.5">
                 <div class="flex justify-between items-center group">
-                  <code class="text-[11px] text-primary bg-primary/5 px-1 rounded">{description}</code>
-                  <span class="text-[10px] text-muted-foreground">词条的上下文描述</span>
+                  <code class="text-xs text-primary bg-primary/5 px-1 rounded">{description}</code>
+                  <span class="text-xs text-muted-foreground">词条的上下文描述</span>
                 </div>
                 <div class="flex justify-between items-center group">
-                  <code class="text-[11px] text-primary bg-primary/5 px-1 rounded">{translations}</code>
-                  <span class="text-[10px] text-muted-foreground">当前已有的翻译参考</span>
+                  <code class="text-xs text-primary bg-primary/5 px-1 rounded">{translations}</code>
+                  <span class="text-xs text-muted-foreground">当前已有的翻译参考</span>
                 </div>
               </div>
             </div>
@@ -3191,7 +3192,7 @@ function resetProjectState() {
               <p class="text-xs font-bold text-amber-600 mb-2 uppercase flex items-center gap-1">
                 <Search class="w-3 h-3" /> 注意事项
               </p>
-              <p class="text-[10px] text-amber-700/80 leading-relaxed">
+              <p class="text-xs text-amber-700/80 leading-relaxed">
                 系统会自动在提示词末尾添加 JSON 格式化指令。您无需重复定义 JSON 结构，只需关注翻译的质量、风格和术语要求。
               </p>
             </div>
@@ -3231,7 +3232,7 @@ function resetProjectState() {
             class="min-h-[180px] font-mono text-sm leading-relaxed p-3 bg-gray-50/50 dark:bg-zinc-900/50 disabled:opacity-80"
             placeholder="输入或修改提示词..."
           />
-          <p class="text-[11px] text-muted-foreground">
+          <p class="text-xs text-muted-foreground">
             此次修改仅对本次翻译有效，不会修改全局设置。<template v-if="can('project.prompt')">
               如需永久修改，请到工具栏的
               <button class="text-primary hover:underline" @click="cancelTranslateDialog(); showSettingsModal = true">

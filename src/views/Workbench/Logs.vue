@@ -200,7 +200,7 @@ onMounted(() => {
           <ArrowLeft class="size-4" />
         </UiButton>
         <div class="min-w-0">
-          <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+          <h1 class="text-xl font-semibold tracking-tight text-foreground">
             操作日志
           </h1>
           <p class="mt-1 text-sm text-muted-foreground">
@@ -218,7 +218,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="min-h-[30rem] overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <main class="min-h-[30rem] overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       <div v-if="loading" class="flex min-h-[24rem] flex-col items-center justify-center px-6 text-center" role="status" aria-live="polite">
         <span class="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
           <Loader2 class="size-5 animate-spin" />
@@ -279,7 +279,7 @@ onMounted(() => {
               <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <UiAvatar class="size-6 shrink-0 border border-border">
                   <UiAvatarImage v-if="log.user?.avatar_url" :src="log.user.avatar_url" />
-                  <UiAvatarFallback class="text-[10px]">
+                  <UiAvatarFallback class="text-xs">
                     <UserIcon v-if="!log.user?.nickname" class="size-3" />
                     <template v-else>
                       {{ log.user.nickname.slice(0, 1) }}
@@ -303,10 +303,10 @@ onMounted(() => {
                 <span class="truncate font-mono text-xs font-semibold text-foreground">
                   {{ log.term.key }}
                 </span>
-                <span class="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <span class="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
                   {{ log.term.module || '无模块' }}
                 </span>
-                <span class="font-mono text-[10px] text-muted-foreground/70">#{{ log.term_id }}</span>
+                <span class="font-mono text-xs text-muted-foreground/70">#{{ log.term_id }}</span>
               </div>
 
               <p v-else class="mt-2 text-xs text-muted-foreground">

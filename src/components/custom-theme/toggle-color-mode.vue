@@ -10,10 +10,11 @@ const mode = useColorMode()
 const colorModes: {
   colorMode: BasicColorSchema
   icon: Component
+  label: string
 }[] = [
-  { colorMode: 'light', icon: Sun },
-  { colorMode: 'dark', icon: Moon },
-  { colorMode: 'auto', icon: SunMoon },
+  { colorMode: 'light', icon: Sun, label: '浅色' },
+  { colorMode: 'dark', icon: Moon, label: '深色' },
+  { colorMode: 'auto', icon: SunMoon, label: '跟随系统' },
 ]
 
 function setColorMode(colorMode: BasicColorSchema) {
@@ -23,19 +24,20 @@ function setColorMode(colorMode: BasicColorSchema) {
 
 <template>
   <div class="space-y-1.5 pt-6">
-    <UiLabel for="radius" class="text-xs">
-      Color Mode
-    </UiLabel>
+    <p class="text-xs font-medium">
+      显示模式
+    </p>
     <div class="grid grid-cols-3 gap-2 py-1.5">
       <UiButton
         v-for="item in colorModes" :key="item.colorMode"
         variant="outline"
         class="justify-center items-center h-8 px-3"
-        :class="item.colorMode === mode ? 'border-foreground border-2' : ''"
+        :class="item.colorMode === mode ? 'border-primary bg-accent text-accent-foreground' : ''"
+        :aria-pressed="item.colorMode === mode"
         @click="setColorMode(item.colorMode)"
       >
         <component :is="item.icon" />
-        <span class="text-xs">{{ item.colorMode }}</span>
+        <span class="text-xs">{{ item.label }}</span>
       </UiButton>
     </div>
   </div>

@@ -139,7 +139,7 @@ onMounted(() => {
   <div class="workspace-page min-h-0 space-y-6">
     <header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 class="text-xl font-semibold tracking-tight text-foreground">
           可选语言
         </h1>
         <p class="mt-1 text-sm text-muted-foreground">
@@ -185,7 +185,7 @@ onMounted(() => {
         </p>
       </div>
     </div>
-    <section class="overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-labelledby="language-list-title">
+    <section class="overflow-hidden rounded-xl border border-border bg-card shadow-xs" aria-labelledby="language-list-title">
       <div class="flex items-center justify-between border-b border-border/70 px-5 py-4">
         <div>
           <h2 id="language-list-title" class="font-medium text-foreground">

@@ -5,7 +5,6 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
-  CircleDotDashed,
   Clock3,
   FileEdit,
   FolderKanban,
@@ -19,6 +18,7 @@ import { toast } from 'vue-sonner'
 import { getProjectDashboard, listProjects } from '@/api/projects'
 import { useRequestScope } from '@/composables/use-request-scope'
 import { errorMessage } from '@/lib/errors'
+import { resolveSourceLanguage } from '@/lib/source-language'
 import DashboardSkeleton from './DashboardSkeleton.vue'
 
 defineOptions({ name: 'Dashboard' })
@@ -101,8 +101,8 @@ const languageCoverage = computed(() => dashboard.value?.languages ?? [])
 const recentLogs = computed(() => dashboard.value?.recent_logs ?? [])
 const activityTrend = computed(() => dashboard.value?.activity_trend ?? [])
 
-const sourceLanguage = computed(() => languageCoverage.value.find(language => language.is_source) ?? null)
-const targetLanguageCount = computed(() => Math.max(languageCoverage.value.filter(language => !language.is_source).length, 0))
+const sourceLanguage = computed(() => resolveSourceLanguage(languageCoverage.value) ?? null)
+const targetLanguageCount = computed(() => languageCoverage.value.length - (sourceLanguage.value ? 1 : 0))
 const publishedRate = computed(() => {
   if (!stats.value?.total)
     return 0
@@ -111,15 +111,16 @@ const publishedRate = computed(() => {
 
 const sortedLanguages = computed(() => {
   return [...languageCoverage.value].sort((a, b) => {
-    if (a.is_source !== b.is_source)
-      return a.is_source ? -1 : 1
+    const sourceCode = sourceLanguage.value?.code
+    if ((a.code === sourceCode) !== (b.code === sourceCode))
+      return a.code === sourceCode ? -1 : 1
     return a.progress - b.progress
   })
 })
 
 const topAttentionLanguages = computed(() => {
   return sortedLanguages.value
-    .filter(language => !language.is_source)
+    .filter(language => language.code !== sourceLanguage.value?.code && language.missing_count > 0)
     .slice(0, 3)
 })
 
@@ -138,8 +139,6 @@ const statCards = computed(() => {
       icon: CheckCircle2,
       tone: 'detail-text',
       accent: 'success',
-      bg: 'bg-muted/30',
-      border: 'border-border',
     },
     {
       label: '待校对',
@@ -148,8 +147,6 @@ const statCards = computed(() => {
       icon: AlertCircle,
       tone: 'detail-text',
       accent: 'info',
-      bg: 'bg-muted/30',
-      border: 'border-border',
     },
     {
       label: '待翻译',
@@ -158,8 +155,6 @@ const statCards = computed(() => {
       icon: Clock3,
       tone: 'detail-text',
       accent: 'warning',
-      bg: 'bg-muted/30',
-      border: 'border-border',
     },
     {
       label: '草稿',
@@ -168,8 +163,6 @@ const statCards = computed(() => {
       icon: FileEdit,
       tone: 'detail-text',
       accent: 'violet',
-      bg: 'bg-muted/30',
-      border: 'border-border',
     },
   ]
 })
@@ -274,529 +267,300 @@ function formatDate(value?: string | null) {
   }).format(new Date(value))
 }
 
-function trendBarHeight(point: DashboardTrendPoint) {
-  return `${Math.max(Math.round((point.count / maxTrendCount.value) * 100), point.count > 0 ? 18 : 8)}%`
-}
+const trendCoordinates = computed(() => activityTrend.value.map((point, index, points) => ({
+  ...point,
+  x: points.length === 1 ? 300 : 40 + index * 520 / (points.length - 1),
+  y: 170 - point.count / maxTrendCount.value * 140,
+})))
+const trendLine = computed(() => trendCoordinates.value.map(point => `${point.x},${point.y}`).join(' '))
+const trendArea = computed(() => {
+  const points = trendCoordinates.value
+  if (!points.length)
+    return ''
+  return `${points[0]!.x},170 ${trendLine.value} ${points[points.length - 1]!.x},170`
+})
+const trendTotal = computed(() => activityTrend.value.reduce((total, point) => total + point.count, 0))
 
 onMounted(loadProjects)
 </script>
 
 <template>
-  <div class="workspace-page min-h-0 space-y-6">
-    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+  <div class="workspace-page space-y-5">
+    <header class="page-heading">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-          项目总览
-        </h1>
+        <h1>项目总览</h1>
         <p class="mt-1 text-sm text-muted-foreground">
-          聚焦当前项目的翻译进度、阻塞点和最近动态。
+          翻译进度、待办与团队动态，集中掌握。
         </p>
       </div>
-
       <div class="flex items-center gap-2">
-        <UiButton variant="outline" size="icon" aria-label="刷新项目总览" :disabled="isLoading" @click="loadDashboard">
+        <UiButton variant="outline" size="icon" aria-label="刷新项目总览" :disabled="isLoading || !selectedProjectId" @click="loadDashboard">
           <RefreshCw class="size-4" :class="isLoading ? 'animate-spin' : ''" />
         </UiButton>
         <UiButton :disabled="!selectedProjectId" @click="goWorkbench">
-          <Wrench class="mr-2 size-4" />
-          进入工作台
+          <Wrench class="size-4" />进入工作台
         </UiButton>
       </div>
-    </div>
+    </header>
 
     <DashboardSkeleton v-if="loadingProjects" show-project-list />
-
     <section v-else-if="projectLoadError" class="workspace-panel flex min-h-64 flex-col items-center justify-center gap-4 p-6 text-center" role="alert">
-      <AlertCircle class="size-6 text-destructive" /><h2 class="font-semibold">
+      <AlertCircle class="size-6 text-destructive" />
+      <h2 class="font-semibold">
         项目列表加载失败
-      </h2><p class="text-sm text-muted-foreground">
+      </h2>
+      <p class="text-sm text-muted-foreground">
         {{ projectLoadError }}
       </p>
       <UiButton variant="outline" @click="loadProjects">
         重新加载
       </UiButton>
     </section>
-
-    <div v-else-if="projects.length === 0" class="rounded-xl border border-dashed bg-card/70 p-10 text-center">
-      <FolderKanban class="mx-auto mb-4 size-10 text-muted-foreground/60" />
+    <section v-else-if="projects.length === 0" class="workspace-panel p-10 text-center">
+      <FolderKanban class="mx-auto mb-4 size-10 text-muted-foreground" />
       <h2 class="text-lg font-semibold">
         还没有翻译项目
       </h2>
       <p class="mt-2 text-sm text-muted-foreground">
-        先创建项目，再回来查看整体进度与翻译健康度。
+        先创建项目，再查看整体翻译进度。
       </p>
       <UiButton class="mt-5" @click="router.push('/projects')">
         前往项目管理
       </UiButton>
-    </div>
-
+    </section>
     <template v-else>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap gap-2" aria-label="选择总览项目">
         <button
-          v-for="project in projects"
-          :key="project.id"
-          class="rounded-lg border px-4 py-2 text-sm transition-colors"
+          v-for="project in projects" :key="project.id" class="rounded-md border px-3 py-2 text-sm transition-colors"
           :aria-pressed="selectedProjectId === project.id"
-          :class="selectedProjectId === project.id
-            ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-            : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'"
+          :class="selectedProjectId === project.id ? 'border-primary/30 bg-accent font-medium text-accent-foreground' : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'"
           @click="switchProject(project.id)"
         >
           {{ project.name }}
         </button>
       </div>
-
       <UiAlert v-if="dashboardError" variant="destructive" role="alert">
-        <AlertCircle /><UiAlertTitle>项目总览加载失败</UiAlertTitle><UiAlertDescription>
-          {{ dashboardError }} <UiButton variant="outline" size="sm" :disabled="loadingDashboard" @click="loadDashboard">
+        <AlertCircle /><UiAlertTitle>项目总览加载失败</UiAlertTitle>
+        <UiAlertDescription>
+          {{ dashboardError }}<UiButton variant="outline" size="sm" :disabled="loadingDashboard" @click="loadDashboard">
             重新加载
           </UiButton>
         </UiAlertDescription>
       </UiAlert>
       <DashboardSkeleton v-if="loadingDashboard && !dashboard" />
-
       <template v-else-if="dashboard && currentProject && stats && focus">
-        <div class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-          <section class="overflow-hidden rounded-xl border border-border bg-card">
-            <div class="flex h-full flex-col gap-6 p-6">
-              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div class="space-y-2">
-                  <div data-tone="info" class="detail-badge inline-flex items-center gap-2 rounded-md border px-3 py-1 text-xs">
-                    <FolderKanban class="size-3.5" />
-                    当前项目
-                  </div>
-                  <div>
-                    <h2 class="text-2xl font-semibold tracking-tight">
-                      {{ currentProject.name }}
-                    </h2>
-                    <p class="mt-1 font-mono text-xs text-muted-foreground">
-                      {{ currentProject.code }}
-                    </p>
-                  </div>
-                  <p class="max-w-2xl text-sm leading-6 text-muted-foreground">
-                    {{ currentProject.description || '这个项目还没有补充描述，可以在项目管理中完善背景说明与命名规范。' }}
-                  </p>
-                </div>
-
-                <div class="grid gap-2 text-sm text-muted-foreground">
-                  <div class="rounded-xl border bg-background/70 px-4 py-3">
-                    <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">
-                      最近活跃
-                    </div>
-                    <div class="mt-1 font-medium text-foreground">
-                      {{ formatRelativeTime(dashboard.last_activity_at) }}
-                    </div>
-                  </div>
-                  <div class="rounded-xl border bg-background/70 px-4 py-3">
-                    <div class="text-xs uppercase tracking-[0.2em] text-muted-foreground/70">
-                      最近更新
-                    </div>
-                    <div class="mt-1 font-medium text-foreground">
-                      {{ formatDate(currentProject.updated_at) }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="metric-strip">
-                <div class="min-w-0">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    词条总量
-                  </div>
-                  <div class="mt-2 text-3xl font-semibold">
-                    {{ stats.total }}
-                  </div>
-                </div>
-                <div class="min-w-0">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    目标语种
-                  </div>
-                  <div class="mt-2 text-3xl font-semibold">
-                    {{ targetLanguageCount }}
-                  </div>
-                  <div class="mt-1 text-xs text-muted-foreground">
-                    源语言：{{ sourceLanguage?.name || '未设置' }}
-                  </div>
-                </div>
-                <div class="min-w-0">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    整体发布率
-                  </div>
-                  <div class="mt-2 text-3xl font-semibold">
-                    {{ publishedRate }}%
-                  </div>
-                  <div class="mt-2 h-2 overflow-hidden rounded-full bg-primary/10">
-                    <div data-tone="success" class="detail-progress h-full rounded-full transition-all" :style="{ width: `${publishedRate}%` }" />
-                  </div>
-                </div>
-              </div>
+        <section class="dashboard-context flex flex-wrap items-center justify-between gap-4" aria-label="当前项目">
+          <div class="flex min-w-0 items-center gap-3">
+            <span class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground"><FolderKanban class="size-5" /></span>
+            <div class="min-w-0">
+              <h2 class="truncate text-base font-semibold" :title="currentProject.name">
+                {{ currentProject.name }}
+              </h2>
+              <p class="mt-1 truncate text-xs text-muted-foreground" :title="currentProject.description">
+                {{ currentProject.description || currentProject.code }}
+              </p>
             </div>
-          </section>
+          </div>
+          <span class="text-xs text-muted-foreground">最近活跃 · {{ formatRelativeTime(dashboard.last_activity_at) }}</span>
+        </section>
 
-          <section class="rounded-xl border bg-card p-6 shadow-sm">
-            <div class="flex items-center justify-between">
-              <div>
-                <h3 class="text-sm font-semibold">
-                  当前关注点
-                </h3>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  优先处理可校对词条，再补齐缺失译文。
-                </p>
-              </div>
-              <CircleDotDashed class="size-4 text-muted-foreground" />
+        <div class="dashboard-metrics" aria-label="项目指标" :aria-busy="loadingDashboard">
+          <article class="workspace-panel p-4">
+            <div class="flex items-center gap-2 text-xs text-muted-foreground">
+              <FolderKanban class="size-4 text-primary" />词条总量
             </div>
-
-            <div class="mt-5 space-y-3">
-              <div class="flex items-start justify-between rounded-xl border border-border bg-muted p-4 dark:border-border dark:bg-muted">
-                <div>
-                  <div class="text-sm font-medium text-foreground dark:text-foreground">
-                    优先校对
-                  </div>
-                  <p class="mt-1 text-xs text-foreground dark:text-foreground">
-                    已补全翻译、可以校对通过的词条
-                  </p>
-                </div>
-                <div class="text-2xl font-semibold text-foreground dark:text-foreground">
-                  {{ focus.terms_ready_for_review }}
-                </div>
-              </div>
-
-              <div class="flex items-start justify-between rounded-xl border border-border bg-muted p-4 dark:border-border dark:bg-muted">
-                <div>
-                  <div class="text-sm font-medium text-foreground dark:text-foreground">
-                    翻译进行中
-                  </div>
-                  <p class="mt-1 text-xs text-foreground dark:text-foreground">
-                    仍有语种缺口，需要继续补齐
-                  </p>
-                </div>
-                <div class="text-2xl font-semibold text-foreground dark:text-foreground">
-                  {{ focus.terms_pending }}
-                </div>
-              </div>
-
-              <div class="grid gap-3 sm:grid-cols-2">
-                <div class="rounded-xl border p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    24h 变更
-                  </div>
-                  <div class="mt-2 text-2xl font-semibold">
-                    {{ focus.recent_changes_24h }}
-                  </div>
-                </div>
-                <div class="rounded-xl border p-4">
-                  <div class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    超过 7 天未完成
-                  </div>
-                  <div class="mt-2 text-2xl font-semibold">
-                    {{ focus.stale_terms }}
-                  </div>
-                </div>
-              </div>
+            <p class="metric-value mt-3">
+              {{ stats.total.toLocaleString('zh-CN') }}<span class="ml-1 text-xs font-normal text-muted-foreground">条</span>
+            </p>
+            <p class="mt-2 text-xs text-muted-foreground">
+              {{ targetLanguageCount }} 个目标语种
+            </p>
+          </article>
+          <article v-for="card in statCards" :key="card.label" :data-tone="card.accent" class="workspace-panel p-4">
+            <div class="flex items-center gap-2 text-xs text-muted-foreground">
+              <component :is="card.icon" class="detail-text size-4" />{{ card.label }}
             </div>
-          </section>
+            <p class="metric-value mt-3">
+              {{ card.value.toLocaleString('zh-CN') }}<span class="ml-1 text-xs font-normal text-muted-foreground">条</span>
+            </p>
+            <p class="mt-2 text-xs text-muted-foreground">
+              {{ card.hint }}
+            </p>
+          </article>
+          <article class="workspace-panel p-4">
+            <div class="flex items-center gap-2 text-xs text-muted-foreground">
+              <Languages class="size-4 text-primary" />发布率
+            </div>
+            <p class="metric-value mt-3">
+              {{ publishedRate }}<span class="ml-1 text-sm font-normal text-muted-foreground">%</span>
+            </p>
+            <p class="mt-2 text-xs text-muted-foreground">
+              源语言 · {{ sourceLanguage?.name || '未设置' }}
+            </p>
+          </article>
         </div>
 
-        <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <section class="rounded-xl border bg-card p-6 shadow-sm">
-            <div class="flex items-center justify-between">
-              <div>
-                <h3 class="text-sm font-semibold">
-                  流程状态
-                </h3>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  从草稿到发布，当前积压一眼看清。
-                </p>
-              </div>
-              <Activity class="size-4 text-muted-foreground" />
-            </div>
-
-            <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <article
-                v-for="card in statCards"
-                :key="card.label"
-                :data-tone="card.accent"
-                class="rounded-xl border bg-muted/30 p-4"
-                :class="[card.border, card.bg]"
-              >
-                <div class="flex items-center justify-between">
-                  <span class="text-sm font-medium" :class="card.tone">{{ card.label }}</span>
-                  <component :is="card.icon" class="size-4" :class="card.tone" />
-                </div>
-                <div class="mt-4 text-3xl font-semibold">
-                  {{ card.value }}
-                </div>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  {{ card.hint }}
-                </p>
-              </article>
-            </div>
-          </section>
-
-          <section class="rounded-xl border bg-card p-6 shadow-sm">
-            <div class="flex items-center justify-between">
+        <div class="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <section class="workspace-panel min-w-0 p-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 class="text-sm font-semibold">
                   最近 7 天活跃度
-                </h3>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  根据日志条数观察项目活跃程度。
+                </h3><p class="mt-1 text-xs text-muted-foreground">
+                  按操作日志统计，每日变更次数
                 </p>
               </div>
-              <span class="text-xs text-muted-foreground">最近一周</span>
+              <span class="flex items-center gap-1.5 text-xs text-muted-foreground"><span class="size-2 rounded-full bg-primary" />操作次数 · 合计 {{ trendTotal }}</span>
             </div>
-
-            <div class="mt-6 flex h-44 items-end gap-3">
-              <div
-                v-for="point in activityTrend"
-                :key="point.date"
-                class="flex flex-1 flex-col items-center gap-2"
-              >
-                <div class="flex h-full w-full items-end">
-                  <div
-                    class="w-full rounded-t-xl bg-primary/75 transition-all"
-                    :style="{ height: trendBarHeight(point) }"
-                  />
-                </div>
-                <div class="text-center text-[11px] text-muted-foreground">
-                  {{ point.date.slice(5).replace('-', '/') }}
-                </div>
-                <div class="text-[11px] font-medium text-foreground">
-                  {{ point.count }}
-                </div>
-              </div>
+            <div v-if="!activityTrend.length" class="flex h-60 items-center justify-center text-sm text-muted-foreground">
+              暂无活跃记录
             </div>
+            <template v-else>
+              <svg viewBox="0 0 600 205" class="mt-5 h-52 w-full" role="img" aria-label="最近七天每日操作次数趋势，下方提供每日数值">
+                <defs><linearGradient id="activity-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--primary)" stop-opacity="0.15" /><stop offset="100%" stop-color="var(--primary)" stop-opacity="0.01" /></linearGradient></defs>
+                <g v-for="tick in [0, 0.5, 1]" :key="tick">
+                  <line x1="40" x2="560" :y1="170 - tick * 140" :y2="170 - tick * 140" stroke="var(--border)" stroke-dasharray="3 4" />
+                  <text x="28" :y="174 - tick * 140" text-anchor="end" fill="var(--muted-foreground)" font-size="12">{{ Math.round(tick * maxTrendCount) }}</text>
+                </g>
+                <polygon :points="trendArea" fill="url(#activity-fill)" />
+                <polyline :points="trendLine" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linejoin="round" />
+                <g v-for="point in trendCoordinates" :key="point.date">
+                  <circle :cx="point.x" :cy="point.y" r="3" fill="var(--card)" stroke="var(--primary)" stroke-width="2" />
+                  <text :x="point.x" y="198" text-anchor="middle" fill="var(--muted-foreground)" font-size="12">{{ point.date.slice(5) }}</text>
+                </g>
+              </svg>
+              <details class="mt-1 text-xs text-muted-foreground">
+                <summary class="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                  查看每日数据
+                </summary>
+                <dl class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div v-for="point in activityTrend" :key="point.date">
+                    <dt>{{ point.date }}</dt><dd class="mt-1 font-medium text-foreground">
+                      {{ point.count }} 次
+                    </dd>
+                  </div>
+                </dl>
+              </details>
+            </template>
           </section>
-        </div>
 
-        <div class="grid gap-4 xl:grid-cols-[1.05fr_0.95fr] xl:items-stretch">
-          <section class="flex min-h-0 flex-col rounded-xl border bg-card p-6 shadow-sm xl:h-[44rem]">
+          <section class="workspace-panel p-5">
             <div class="flex items-center justify-between">
-              <div>
-                <h3 class="text-sm font-semibold">
-                  语种健康度
-                </h3>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  优先把落后的语言包补齐，避免后续集中返工。
-                </p>
-              </div>
-              <div class="text-xs text-muted-foreground">
-                共 {{ languageCoverage.length }} 个语种
-              </div>
+              <h3 class="text-sm font-semibold">
+                流程分布
+              </h3><Activity class="size-4 text-muted-foreground" />
             </div>
-
-            <div v-if="sortedLanguages.length === 0" class="mt-8 rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-              当前项目还没有配置语言。
-            </div>
-
-            <div v-else class="mt-5 min-h-0 flex-1 overflow-hidden">
-              <div class="h-full space-y-4 overflow-y-auto pr-2">
-                <article
-                  v-for="language in sortedLanguages"
-                  :key="language.code"
-                  class="rounded-xl border p-4"
-                >
-                  <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-2">
-                        <span class="truncate font-medium">{{ language.name }}</span>
-                        <span
-                          v-if="language.is_source"
-                          class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary"
-                        >
-                          源语言
-                        </span>
-                      </div>
-                      <p class="mt-1 text-xs text-muted-foreground">
-                        已翻译 {{ language.translated_count }} / {{ stats.total }}，剩余 {{ language.missing_count }}
-                      </p>
-                    </div>
-                    <div class="text-right">
-                      <div class="text-2xl font-semibold">
-                        {{ language.progress }}%
-                      </div>
-                      <div class="text-[11px] text-muted-foreground">
-                        {{ language.code }}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-                    <div
-                      data-tone="success" class="detail-progress h-full rounded-full transition-all"
-                      :style="{ width: `${language.progress}%` }"
-                    />
-                  </div>
-                </article>
+            <p class="mt-1 text-xs text-muted-foreground">
+              从草稿到发布，查看当前词条状态。
+            </p>
+            <div class="mt-6 space-y-5">
+              <div v-for="card in statCards" :key="card.label" :data-tone="card.accent">
+                <div class="mb-2 flex items-center justify-between text-xs">
+                  <span>{{ card.label }}</span><span class="tabular-nums text-muted-foreground">{{ card.value }} / {{ stats.total }}</span>
+                </div>
+                <div class="h-2 overflow-hidden rounded-full bg-muted">
+                  <div class="detail-progress h-full rounded-full" :style="{ width: `${stats.total ? card.value / stats.total * 100 : 0}%` }" />
+                </div>
               </div>
             </div>
           </section>
-
-          <div class="flex min-h-0 flex-col gap-4 overflow-hidden xl:h-[44rem]">
-            <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card p-6 shadow-sm">
-              <div class="flex items-center justify-between">
-                <div>
-                  <h3 class="text-sm font-semibold">
-                    优先关注的语种
-                  </h3>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    默认显示进度最低的 3 个目标语种。
-                  </p>
-                </div>
-                <Languages class="size-4 text-muted-foreground" />
-              </div>
-
-              <div v-if="topAttentionLanguages.length === 0" class="mt-6 text-sm text-muted-foreground">
-                暂无需要重点关注的语种。
-              </div>
-
-              <div v-else class="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-                <div class="space-y-3">
-                  <div
-                    v-for="language in topAttentionLanguages"
-                    :key="language.code"
-                    class="rounded-xl border bg-muted/30 p-4"
-                  >
-                    <div class="flex items-center justify-between">
-                      <div>
-                        <div class="font-medium">
-                          {{ language.name }}
-                        </div>
-                        <div class="mt-1 text-xs text-muted-foreground">
-                          还缺 {{ language.missing_count }} 条
-                        </div>
-                      </div>
-                      <div class="text-xl font-semibold">
-                        {{ language.progress }}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card p-6 shadow-sm">
-              <div class="flex items-center justify-between">
-                <div>
-                  <h3 class="text-sm font-semibold">
-                    快捷入口
-                  </h3>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    把常用动作放在右手边，减少切换成本。
-                  </p>
-                </div>
-              </div>
-
-              <div class="mt-5 space-y-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
-                <button
-                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                  @click="goWorkbench"
-                >
-                  <div class="rounded-xl bg-primary/10 p-2 text-primary">
-                    <Wrench class="size-4" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="font-medium">
-                      打开工作台
-                    </div>
-                    <div class="text-xs text-muted-foreground">
-                      继续翻译、校对或发布词条
-                    </div>
-                  </div>
-                  <ArrowRight class="size-4 text-muted-foreground" />
-                </button>
-
-                <button
-                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                  @click="goLogs"
-                >
-                  <div class="rounded-xl bg-primary/10 p-2 text-primary">
-                    <Clock3 class="size-4" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="font-medium">
-                      查看全部日志
-                    </div>
-                    <div class="text-xs text-muted-foreground">
-                      按时间线回看所有变更与发布历史
-                    </div>
-                  </div>
-                  <ArrowRight class="size-4 text-muted-foreground" />
-                </button>
-
-                <button
-                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                  @click="router.push('/projects')"
-                >
-                  <div class="rounded-xl bg-primary/10 p-2 text-primary">
-                    <FolderKanban class="size-4" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="font-medium">
-                      管理项目设置
-                    </div>
-                    <div class="text-xs text-muted-foreground">
-                      调整语言配置、项目描述和基础信息
-                    </div>
-                  </div>
-                  <ArrowRight class="size-4 text-muted-foreground" />
-                </button>
-              </div>
-            </section>
-          </div>
         </div>
 
-        <section class="rounded-xl border bg-card p-6 shadow-sm">
-          <div class="flex items-center justify-between">
-            <div>
+        <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <section class="workspace-panel min-w-0 p-5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
               <h3 class="text-sm font-semibold">
-                最近动态
-              </h3>
-              <p class="mt-1 text-xs text-muted-foreground">
-                展示最新操作，帮助团队快速理解当前推进节奏。
-              </p>
+                语种完成情况
+              </h3><span class="text-xs text-muted-foreground">共 {{ languageCoverage.length }} 个语种</span>
             </div>
-            <UiButton variant="ghost" size="sm" class="text-xs" @click="goLogs">
-              查看全部
+            <p class="mt-1 text-xs text-muted-foreground">
+              目标语种按完成率排序，优先补齐缺失译文。
+            </p>
+            <p v-if="!sortedLanguages.length" class="py-10 text-center text-sm text-muted-foreground">
+              当前项目还没有配置语言。
+            </p>
+            <div v-else class="mt-4 max-h-96 divide-y overflow-y-auto pr-1 [scrollbar-gutter:stable]" tabindex="0" aria-label="语种完成情况列表">
+              <article v-for="language in sortedLanguages" :key="language.code" class="py-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <span class="font-medium">{{ language.name }}</span><span class="font-mono text-xs text-muted-foreground">{{ language.code }}</span><span v-if="language.code === sourceLanguage?.code" class="rounded-sm bg-accent px-1.5 py-0.5 text-xs text-accent-foreground">源语言</span>
+                  </div>
+                  <span class="tabular-nums text-muted-foreground"><strong class="font-semibold text-foreground">{{ language.progress }}%</strong> · {{ language.translated_count }} / {{ stats.total }}</span>
+                </div>
+                <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div class="h-full rounded-full bg-primary" :style="{ width: `${language.progress}%` }" />
+                </div>
+              </article>
+            </div>
+          </section>
+          <section class="workspace-panel p-5">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-semibold">
+                当前待办
+              </h3><AlertCircle class="size-4 text-muted-foreground" />
+            </div>
+            <div class="mt-4 divide-y">
+              <div class="flex items-center justify-between gap-4 py-3">
+                <div>
+                  <p class="text-sm font-medium">
+                    优先校对
+                  </p><p class="mt-1 text-xs text-muted-foreground">
+                    译文已补全，可以进入校对
+                  </p>
+                </div><strong class="text-xl font-semibold tabular-nums text-primary">{{ focus.terms_ready_for_review }}</strong>
+              </div>
+              <div class="flex items-center justify-between gap-4 py-3">
+                <div>
+                  <p class="text-sm font-medium">
+                    近期变更
+                  </p><p class="mt-1 text-xs text-muted-foreground">
+                    最近 24 小时的操作次数
+                  </p>
+                </div><strong class="text-xl font-semibold tabular-nums">{{ focus.recent_changes_24h }}</strong>
+              </div>
+              <div class="flex items-center justify-between gap-4 py-3">
+                <div>
+                  <p class="text-sm font-medium">
+                    长期未更新
+                  </p><p class="mt-1 text-xs text-muted-foreground">
+                    检查是否仍有未完成内容
+                  </p>
+                </div><strong class="text-xl font-semibold tabular-nums">{{ focus.stale_terms }}</strong>
+              </div>
+            </div>
+            <p v-if="topAttentionLanguages.length" class="mt-3 text-xs leading-5 text-muted-foreground">
+              优先关注：{{ topAttentionLanguages.map(language => `${language.name}（缺 ${language.missing_count} 条）`).join('、') }}
+            </p>
+            <p v-else class="mt-3 text-xs text-muted-foreground">
+              暂无需要补齐译文的目标语种。
+            </p>
+            <UiButton variant="outline" class="mt-4 w-full" @click="goWorkbench">
+              继续处理词条<ArrowRight class="size-4" />
+            </UiButton>
+          </section>
+        </div>
+
+        <section class="workspace-panel p-5">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold">
+              最近动态
+            </h3><UiButton v-permission="'logs.view'" variant="ghost" size="sm" @click="goLogs">
+              查看全部<ArrowRight class="size-3.5" />
             </UiButton>
           </div>
-
-          <div v-if="recentLogs.length === 0" class="mt-6 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          <p v-if="!recentLogs.length" class="py-10 text-center text-sm text-muted-foreground">
             暂无动态记录。
-          </div>
-
-          <div v-else class="mt-6 space-y-4">
-            <article
-              v-for="log in recentLogs"
-              :key="log.id"
-              class="flex gap-4 rounded-xl border p-4"
-            >
-              <UiAvatar class="mt-0.5 size-10 shrink-0 border">
-                <UiAvatarImage :src="log.user?.avatar_url || ''" />
-                <UiAvatarFallback class="bg-primary/10 font-semibold text-primary">
-                  {{ (log.user?.nickname || '?').charAt(0).toUpperCase() }}
-                </UiAvatarFallback>
-              </UiAvatar>
-
+          </p>
+          <div v-else class="mt-2 divide-y">
+            <article v-for="log in recentLogs" :key="log.id" class="flex items-start gap-3 py-4">
+              <span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground"><Clock3 class="size-4" /></span>
               <div class="min-w-0 flex-1">
-                <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                  <div class="min-w-0">
-                    <p class="text-sm leading-6 text-foreground">
-                      <span class="font-medium">{{ log.user?.nickname || '系统' }}</span>
-                      <span class="mx-1 text-muted-foreground">
-                        {{ log.scope === 'project' ? `批量创建了 ${log.item_count || 1} 个词条` : log.action }}
-                      </span>
-                      <span v-if="log.scope === 'project'" class="font-mono text-primary">
-                        {{ log.term_keys?.slice(0, 3).join('、') || '批量词条' }}
-                      </span>
-                      <span v-else class="font-mono text-primary">{{ log.term?.key || '未知词条' }}</span>
-                    </p>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {{ log.scope === 'project' ? '项目级操作 / ' : (log.term?.module ? `${log.term.module} / ` : '') }}{{ formatDate(log.created_at) }}
-                    </p>
-                  </div>
-                  <span class="shrink-0 text-xs text-muted-foreground">{{ formatRelativeTime(log.created_at) }}</span>
-                </div>
+                <p class="break-words text-sm leading-6">
+                  <span class="font-medium">{{ log.user?.nickname || '系统' }}</span><span class="mx-2 text-muted-foreground">{{ log.scope === 'project' ? `批量创建了 ${log.item_count || 1} 个词条` : log.action }}</span><span class="font-mono text-xs">{{ log.scope === 'project' ? log.term_keys?.slice(0, 3).join('、') || '批量词条' : log.term?.key || '未知词条' }}</span>
+                </p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  {{ formatDate(log.created_at) }}
+                </p>
               </div>
             </article>
           </div>

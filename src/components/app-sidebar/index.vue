@@ -13,11 +13,11 @@ const { user } = storeToRefs(useAuthStore())
 
 <template>
   <UiSidebar collapsible="icon" class="z-50">
-    <UiSidebarHeader class="border-b border-sidebar-border px-3 py-6">
+    <UiSidebarHeader class="border-b border-sidebar-border px-3 py-5">
       <RouterLink to="/dashboard" aria-label="Nexus 多语言工作台，前往项目总览" class="flex min-w-0 items-center gap-3 rounded-lg px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring">
         <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground"><Languages class="size-5" /></span>
         <span class="min-w-0 group-data-[collapsible=icon]:hidden">
-          <span class="block text-xl font-semibold tracking-tight">Nexus</span>
+          <span class="block text-xl font-semibold tracking-tight text-sidebar-primary">Nexus</span>
           <span class="mt-0.5 block text-xs text-muted-foreground">多语言工作台</span>
         </span>
       </RouterLink>
@@ -30,7 +30,7 @@ const { user } = storeToRefs(useAuthStore())
         从原文到发布
       </p>
       <p class="mt-2 text-xs leading-5 text-muted-foreground">
-        在同一个工作空间录入词条、补齐译文、校对并发布。
+        录入词条 → 补齐译文 → 校对发布
       </p>
     </div>
     <UiSidebarFooter class="border-t border-sidebar-border px-3 py-4">

@@ -3,23 +3,23 @@ version: alpha
 name: "Nexus Multilingual"
 description: "A focused localization operations desk for translating, reviewing, and publishing software terminology."
 colors:
-  background: "oklch(1 0 0)"
-  foreground: "oklch(0.145 0 0)"
-  primary: "oklch(0.205 0 0)"
-  muted: "oklch(0.97 0 0)"
-  border: "oklch(0.922 0 0)"
-  danger: "oklch(0.577 0.245 27.325)"
+  background: "#ffffff"
+  foreground: "#262d33"
+  primary: "#007f7c"
+  muted: "#f2f5f7"
+  border: "#e5eaf0"
+  danger: "#c43d58"
 typography:
   interface:
-    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Segoe UI, PingFang SC, Microsoft YaHei, system-ui, sans-serif"
   data:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
 rounded:
-  DEFAULT: "0.625rem"
-  sm: "0.375rem"
-  md: "0.5rem"
-  lg: "0.625rem"
-  xl: "0.875rem"
+  DEFAULT: "0.375rem"
+  sm: "0.25rem"
+  md: "0.375rem"
+  lg: "0.375rem"
+  xl: "0.5rem"
 spacing:
   control: "0.75rem"
   panel: "1rem"
@@ -40,6 +40,9 @@ components:
     textColor: "{colors.foreground}"
     rounded: "{rounded.xl}"
     padding: "{spacing.control}"
+  table-divider:
+    backgroundColor: "{colors.border}"
+    height: "1px"
   button:
     backgroundColor: "{colors.primary}"
     textColor: "{colors.background}"
@@ -61,7 +64,7 @@ components:
 
 ### Creative North Star
 
-The product shares Helios’ restrained black, white and gray visual family while remaining a well-organized translation editor: a quiet technical work surface where source text, target languages, validation, and publishing state can be compared without visual noise.
+The product adopts the user’s light enterprise-dashboard reference: pale gray workspaces, white panels, teal navigation and actions, and restrained blue/violet accents. The source-to-target language rail remains the recognizable translation-workspace signature. Overview pages may use independent metric cards and light charts; editing stays compact and task focused.
 
 ### Product context and register
 
@@ -72,12 +75,14 @@ The product shares Helios’ restrained black, white and gray visual family whil
 - **Register:** Product/admin.
 - **Memorable signature:** The source-language-to-target-language rail identifies the workbench as a localization tool, not a generic CRUD table.
 - **Restraint:** Table cells, forms, destructive actions, and status feedback remain familiar and task-oriented.
-- **Anti-references:** Avoid marketing dashboards, floating action clutter, decorative gradients, oversized KPI cards, and spreadsheet chrome that obscures the publishing workflow.
+- **Anti-references:** Avoid marketing-style hero metrics, floating action clutter, decorative gradients, oversized KPI cards, and spreadsheet chrome that obscures the publishing workflow.
 - **Token ownership/runtime mapping:** Existing runtime CSS is canonical. `src/style.css` provides semantic Tailwind tokens, `src/assets/themes.css` supplies user-selectable theme mappings, and `src/assets/scrollbar.css` owns the global scrollbar baseline. This file mirrors those accepted values and documents their use.
 
 ## Colors
 
-Use semantic runtime roles rather than raw feature colors for primary surfaces and controls. Background, foreground, muted, border, primary, and danger map directly to the CSS custom properties with the same role. Main surfaces and workflow summaries use neutral gray tones, matching Helios. Use small blue, green, amber and violet content accents for icons, badges, metric markers and progress; main navigation, card surfaces and primary actions remain neutral. Error and destructive states retain semantic red. Dark themes remap semantics without changing hierarchy.
+Use semantic runtime roles rather than raw feature colors. The default teal palette uses primary #007f7c with white text, foreground #262d33, card/background #ffffff, muted #f2f5f7, muted foreground #697582, border #e5eaf0, input boundary #8995a1 and destructive #c43d58. The workspace surface derives from background 25% + muted 75%. Sidebar selection uses a pale teal surface with deep teal text and a narrow active marker. Charts use teal, blue, violet, pink and amber; ordinary text never inherits bright chart colors.
+
+The default theme is teal; existing persisted theme/radius preferences remain respected. src/style.css owns the base teal palette and its dark adapter. src/assets/themes.css owns alternate theme remapping, including an explicit neutral zinc adapter. assets/index.css is a compatibility entry without duplicated tokens; accordion animation is compiled with style.css. Theme files do not own radius. useSystemTheme is the sole DOM theme/radius synchronizer. Dark mode keeps panel hierarchy with #152126 background, #1c2b31 cards and #55d5ca primary; text remains semantic.
 
 ## Typography
 
@@ -85,7 +90,7 @@ The interface uses the system sans stack for predictable Chinese and multilingua
 
 ## Layout
 
-The shell follows the Helios family: a neutral sidebar, no global utility header, and a pale gray workspace with white panels. Desktop navigation can collapse into an icon rail; users can resize the expanded sidebar from 220px to 360px (264px default), with keyboard controls and persistent local preference. Narrow screens use the shared off-canvas navigation drawer, opened by a single compact button without a top menu bar. Each route owns its content padding; workbench pages use a bounded content area with one vertical owner. The workbench header and filter panel stay compact, while the table owns its horizontal and vertical overflow. At narrow widths controls reflow, while the comparison table retains explicit horizontal scrolling. Panel rhythm follows the existing 12–24px utility spacing used by shared components.
+The shell uses a white sidebar with teal selection, no global utility header, and a pale gray workspace with white panels. Desktop navigation can collapse into an icon rail; users can resize the expanded sidebar from 220px to 360px (264px default), with keyboard controls and persistent local preference. Narrow screens use the shared off-canvas navigation drawer, opened by a single compact button without a top menu bar. Each route owns its content padding; workbench pages use a bounded content area with one vertical owner. The workbench header and filter panel stay compact, while the table owns its horizontal and vertical overflow. At narrow widths controls reflow, while the comparison table retains explicit horizontal scrolling. Panel rhythm follows a 4px scale: 16px module gaps, 16–20px panel padding and 24px desktop page padding; narrow pages use 12px side padding. Overview uses six compact metric cards at wide widths, three below 1280px and two below 640px. Inside an existing panel, metric-strip--inline uses dividers instead of nested cards.
 
 ## Elevation & Depth
 
@@ -93,7 +98,7 @@ Static hierarchy uses tonal surfaces and borders first. A restrained small shado
 
 ## Shapes
 
-Controls follow the runtime 10px radius. Major workbench panels use the semantic radius-xl (base radius plus 4px); status indicators may use pills. Dense table cells stay rectangular so rows remain easy to compare.
+Controls use the default 6px base radius and panels use 8px (base plus 2px), a slightly softer adaptation of the reference. Small radius is max(0px, base minus 2px); medium and large equal base. User radius preferences remain functional; status indicators may use pills. Dense table cells stay rectangular so rows remain easy to compare.
 
 ## Components
 
@@ -111,7 +116,11 @@ Desktop navigation uses explicit labels when expanded and canonical icon tooltip
 
 ### Forms and overlays
 
+The #app viewport owns page scrolling and stable scrollbar space; html/body do not scroll. Body-portaled overlays keep their normal background interaction lock through AppUiProvider without extra padding or margin. The page scrollbar stays visible when dialogs, selects, or menus open; overlay scrolling remains independent. Router history restores #app positions, and print uses natural document flow.
+
 Search inputs have accessible labels and immediate clear controls. Authored selects use the shared Reka UI-based primitive. Dialogs and drawers reuse project-owned primitives, keep actions reachable, and display validation or server failures in context.
+
+Selected-term snippets reuse TermExportDialog: show the frozen selection count, an authored language Select, and a bounded monospace read-only preview. Keep copy wording stable while busy, show skipped empty translations, and retain the preview when clipboard permission fails.
 
 ### Iconography
 
@@ -123,7 +132,7 @@ Motion communicates state changes in roughly 150–200ms. Avoid perpetual decora
 
 ### Content and data visualization
 
-Use concise Simplified Chinese, explicit verbs, and consistent lifecycle vocabulary: 草稿、待翻译、待校对、待发布、已发布. Counts and percentages are compact context, not decorative hero metrics.
+Use concise Simplified Chinese, explicit verbs, and consistent lifecycle vocabulary: 草稿、待翻译、待校对、待发布、已发布. Counts and percentages are compact context. Overview charts use real API data; empty data is distinct from zero. Daily activity is a straight-line area chart with an accessible daily-values disclosure. Language progress uses horizontal bars and explicit counts.
 
 ## Do's and Don'ts
 
@@ -132,12 +141,32 @@ Use concise Simplified Chinese, explicit verbs, and consistent lifecycle vocabul
 - **Don't:** Float bulk toolbars over navigation or content.
 - **Don't:** Replace missing content with ambiguous English placeholders or color-only status.
 
-## Helios family alignment (2026-10-14)
+## Reference-led refactor (2026-10-20)
 
-The user requested a full UI refactor aligned with Helios. Project cards become compact directory rows; summaries use the shared metric-strip recipe; business pages use workspace-page spacing. Login uses a split composition with an original-to-translation-to-publication rail. Typography uses Segoe UI / Microsoft YaHei / system sans for interface and the existing monospace stack for identifiers. Semantic CSS remains canonical (Model B): src/style.css → Tailwind semantic utilities → shared shadcn-vue primitives; src/assets/themes.css remaps existing user-selected palettes. workspace-surface and panel-shadow derive from active semantic colors. Retain theme preferences and all permission, session, draft, import, export and release contracts.
+The user approved implementing design-spec.md with flexibility rather than literal screenshot reproduction. Adopt teal primary/selection, white light panels, compact metric cards and chart-based overview. Keep the resizable sidebar, no global top bar, project directory rows and translation table workflows. Use 6px controls / 8px panels rather than strictly 4px controls so the application remains approachable. Existing theme/radius preferences continue to work.
 
-## 内容点缀色（2026-10-14）
+### Runtime mapping (Model B)
 
-主体保持黑白灰，内容可用少量彩色点缀。info（蓝）用于项目与身份，success（绿）用于完成与启用，warning（琥珀）用于待处理，violet（紫）用于权限或 AI。颜色仅用于图标底、标签、细指标线、进度条和少量重点文字；不铺满卡片、不染色导航和主按钮。src/style.css owns --detail-\* and their dark adapters → data-tone → detail-icon/detail-text/detail-badge/detail-progress shared recipes. Labels/icons always carry the meaning independently of color.
+| Role                            | Canonical owner                            | Adapter / consumer                                                     |
+| ------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| Default and dark palette        | src/style.css :root / .dark                | Tailwind @theme inline → shared shadcn-vue controls                    |
+| Alternate palettes              | src/assets/themes.css                      | useSystemTheme → theme class; persisted store preserves user selection |
+| Radius                          | src/store/theme.ts default 0.375rem        | useSystemTheme → --radius → sm/md/lg/xl adapters                       |
+| Panel / metric / table geometry | src/style.css                              | workspace-panel, metric-strip, dashboard-metrics, table slots          |
+| Content accents                 | src/style.css --detail-\*                  | data-tone → detail-icon/detail-text/detail-badge/detail-progress       |
+| Scroll / overlays               | src/assets/scrollbar.css and AppUiProvider | Existing #app scroll ownership and Reka overlays                       |
 
-点缀采用鲜明色值而非暗灰色调：蓝 #3b82f6、绿 #10b981、橙 #f59e0b、紫 #8b5cf6。它们用于图标、进度和细标记；说明与状态文字使用 foreground，避免亮色小字在白底上降低可读性。
+### Intentional changes from the previous Helios direction
+
+| Previous rule                  | Current implementation                                     | Decision                                 |
+| ------------------------------ | ---------------------------------------------------------- | ---------------------------------------- |
+| Neutral primary and navigation | Teal actions, pale teal active navigation                  | Approved reference direction             |
+| Connected metrics everywhere   | Independent overview cards; inline variant inside panels   | Improve scanning without nesting cards   |
+| 10px controls / 14px panels    | 6px controls / 8px panels                                  | Lighter, more precise reference geometry |
+| Multiple global token blocks   | style.css is canonical; index.css is a compatibility entry | Prevent import-order drift               |
+
+Content accents stay small: blue for context, teal for progress, amber for pending work and violet for AI. Status text uses readable foreground and labels/icons carry meaning independently of color. Business and recovery contracts remain in UX-CONTRACT.md.
+
+## Real-data verification (2026-10-20)
+
+The real localhost:5173 app was inspected after Helios login, with a 95-term / 17-language project. Translation columns use a fixed 260px width and wrap previews up to four lines; full content remains available through the existing accessible term-detail action, with a visible table hint; the selection/action/key columns retain 40/96/220px widths so sticky offsets remain aligned. Horizontal scrolling belongs to the table. Overview resolves the same effective source language as the workbench and only flags target languages with missing translations. Local frontend access follows docs/helios-sso.md: use localhost:5173 consistently with the registered callback and allowed origin.

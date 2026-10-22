@@ -10,8 +10,28 @@
   --scrollbar-thumb: color-mix(in oklab, white 24%, transparent);
 }
 
-html {
+/* Page scrolling is independent from the body lock used by portaled overlays. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-gutter: stable;
+  scroll-padding-top: 6rem;
+}
+
+@media print {
+  html,
+  body,
+  #app {
+    height: auto;
+    overflow: visible;
+  }
 }
 
 * {

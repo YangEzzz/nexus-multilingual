@@ -236,7 +236,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
       </div>
     </div>
 
-    <section v-if="!loading && projects.length > 0" class="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4" aria-label="项目筛选">
+    <section v-if="!loading && projects.length > 0" class="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-xs sm:flex-row sm:items-center sm:justify-between sm:p-4" aria-label="项目筛选">
       <div class="relative min-w-0 flex-1 sm:max-w-md">
         <label for="project-search" class="sr-only">搜索项目</label>
         <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -244,7 +244,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
           id="project-search"
           v-model="searchQuery"
           placeholder="搜索项目名称、标识符或描述"
-          class="h-10 rounded-xl bg-background pl-9 pr-9"
+          class="h-10 rounded-md bg-background pl-9 pr-9"
         />
         <button v-if="searchQuery" type="button" class="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="清除项目搜索" @click="clearProjectSearch">
           <X class="size-3.5" />
@@ -257,7 +257,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
     </section>
 
     <div v-if="loading" class="grid gap-3" role="status" aria-live="polite" aria-label="正在加载项目">
-      <div v-for="index in 8" :key="index" class="overflow-hidden rounded-xl border border-border/70 bg-card p-5 shadow-sm">
+      <div v-for="index in 8" :key="index" class="overflow-hidden rounded-xl border border-border/70 bg-card p-5 shadow-xs">
         <div class="flex items-start gap-3">
           <UiSkeleton class="size-10 rounded-xl" />
           <div class="min-w-0 flex-1 space-y-2">
@@ -331,7 +331,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
       <article
         v-for="project in filteredProjects"
         :key="project.id"
-        class="group flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-foreground/25 lg:flex-row lg:items-stretch"
+        class="group flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/30 lg:flex-row lg:items-stretch"
       >
         <div class="grid min-w-0 flex-1 gap-4 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div class="flex items-start gap-3">
@@ -342,7 +342,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
               <h2 class="truncate text-base font-semibold text-foreground" :title="project.name">
                 {{ project.name }}
               </h2>
-              <code class="mt-1 block truncate font-mono text-[11px] text-muted-foreground" :title="project.code">{{ project.code }}</code>
+              <code class="mt-1 block truncate font-mono text-xs text-muted-foreground" :title="project.code">{{ project.code }}</code>
             </div>
           </div>
 
@@ -363,7 +363,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
         </div>
 
         <div class="flex shrink-0 items-center gap-2 border-t border-border bg-muted/20 px-4 py-3 lg:w-56 lg:border-l lg:border-t-0">
-          <UiButton class="min-w-0 flex-1 rounded-lg" size="sm" @click="enterWorkbench(project)">
+          <UiButton variant="ghost" class="min-w-0 flex-1 rounded-md text-primary hover:text-primary" size="sm" @click="enterWorkbench(project)">
             进入工作台
             <ArrowRight class="size-3.5" />
           </UiButton>
@@ -447,7 +447,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
                   v-for="lang in availableLanguages"
                   :key="lang.code"
                   type="button"
-                  class="flex min-w-0 items-center gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm transition-colors hover:bg-background hover:shadow-sm focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                  class="flex min-w-0 items-center gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm transition-colors hover:bg-background hover:shadow-xs focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
                   :class="selectedLangCodes.includes(lang.code) ? 'border-primary/20 bg-primary/10 font-medium text-primary' : 'text-foreground'"
                   :aria-pressed="selectedLangCodes.includes(lang.code)"
                   @click="toggleLang(lang.code)"
@@ -458,7 +458,7 @@ onMounted(() => Promise.all([loadProjects(), loadAvailableLanguages()]))
                     </svg>
                   </span>
                   <span class="min-w-0 truncate">{{ lang.name }}</span>
-                  <code class="ml-auto shrink-0 text-[10px] text-muted-foreground">{{ lang.code }}</code>
+                  <code class="ml-auto shrink-0 text-xs text-muted-foreground">{{ lang.code }}</code>
                 </button>
               </div>
             </div>

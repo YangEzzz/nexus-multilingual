@@ -3,11 +3,11 @@ import type { ContentLayout, Radius, Theme } from '@/constants/themes'
 import { defineStore } from 'pinia'
 
 export const useThemeStore = defineStore('system-config', () => {
-  const radius = ref(0.5)
+  const radius = ref(0.375)
   const setRadius = (newRadius: Radius) => {
     radius.value = newRadius
   }
-  const theme = ref<Theme>('zinc')
+  const theme = ref<Theme>('teal')
   const setTheme = (newTheme: Theme) => {
     theme.value = newTheme
   }

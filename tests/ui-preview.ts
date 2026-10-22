@@ -1,10 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { createApp, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import AppUiProvider from '@/components/AppUiProvider.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { useSystemTheme } from '@/composables/use-system-theme'
 import { createPermissionDirective } from '@/directives/permission'
 import Layout from '@/layouts/index.vue'
+import appRouter from '@/router'
 import { useAuthStore } from '@/store/auth'
 import AISettings from '@/views/AISettings/index.vue'
 import SignIn from '@/views/Auth/SignIn.vue'
@@ -35,6 +37,7 @@ const items = [
   { id: 3, module: 'projects', key: 'project.create', description: '创建新的翻译项目', status: 'review', translations: [{ language_code: 'zh', content: '新建项目' }, { language_code: 'en', content: 'Create project' }] },
 ]
 let failReview = true
+let failSnippet = params.has('snippet-error')
 // Dev-only entry: all API traffic is intercepted, including writes. Never touches real data.
 window.fetch = async (input, init) => {
   const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -93,6 +96,22 @@ window.fetch = async (input, init) => {
   else if (path.endsWith('/locale-release')) {
     data = null
   }
+  else if (path.endsWith('/terms/export/copy')) {
+    const body = init?.body || (input instanceof Request ? await input.clone().text() : '{}')
+    const request = JSON.parse(String(body))
+    if (failSnippet) {
+      failSnippet = false
+      return new Response(JSON.stringify({ code: 500, message: '模拟读取失败，请重新生成' }))
+    }
+    const selected = items.filter(item => request.scope.mode === 'explicit'
+      ? request.scope.ids.includes(item.id)
+      : !request.scope.excluded_ids.includes(item.id))
+    const translated = selected.flatMap((item) => {
+      const value = item.translations.find(translation => translation.language_code === request.language)?.content
+      return value ? [`${JSON.stringify(item.key)}: ${JSON.stringify(value)}`] : []
+    })
+    data = { content: translated.join(',\n'), count: translated.length, skipped: selected.length - translated.length }
+  }
   else if (path.endsWith('/update') && failReview) {
     failReview = false
     return new Response(JSON.stringify({ code: 500, message: '模拟保存失败：保留输入后重试' }))
@@ -110,22 +129,25 @@ async function mountPreview() {
   auth.user = { id: 'fixture', name: '测试管理员', email: 'fixture@example.test', role: params.get('role') || 'admin' }
   auth.isLogin = true
   auth.initialized = true
-  const router = createRouter({ history: createMemoryHistory(), routes: [
-    { path: '/', component: Layout, children: [
-      { path: 'dashboard', name: 'dashboard', component: Dashboard },
-      { path: 'projects', name: 'projects', component: Projects },
-      { path: 'workbench', name: 'workbench', component: Workbench },
-      { path: 'languages', name: 'available-languages', component: Languages },
-      { path: 'ai-settings', name: 'ai-settings', component: AISettings },
-      { path: 'project-logs', name: 'project-logs', component: Logs },
-    ] },
-    { path: '/auth/sign-in', component: SignIn },
-  ] })
+  // Opt into the production history/scroll behavior while keeping every API mocked.
+  const router = params.has('history')
+    ? appRouter
+    : createRouter({ history: createMemoryHistory(), routes: [
+        { path: '/', component: Layout, children: [
+          { path: 'dashboard', name: 'dashboard', component: Dashboard },
+          { path: 'projects', name: 'projects', component: Projects },
+          { path: 'workbench', name: 'workbench', component: Workbench },
+          { path: 'languages', name: 'available-languages', component: Languages },
+          { path: 'ai-settings', name: 'ai-settings', component: AISettings },
+          { path: 'project-logs', name: 'project-logs', component: Logs },
+        ] },
+        { path: '/auth/sign-in', component: SignIn },
+      ] })
   await router.push(params.get('page') || '/projects')
   createApp({
     setup() {
       useSystemTheme()
-      return () => h('div', [h(RouterView), h(Toaster)])
+      return () => h(AppUiProvider, () => [h(RouterView), h(Toaster)])
     },
   })
     .use(pinia)

@@ -16,6 +16,7 @@ declare module 'vue' {
     AppSidebarNavTeam: typeof import('./../components/app-sidebar/nav-team.vue')['default']
     AppSidebarNavTeamAdd: typeof import('./../components/app-sidebar/nav-team-add.vue')['default']
     AppSidebarTeamSwitcher: typeof import('./../components/app-sidebar/team-switcher.vue')['default']
+    AppUiProvider: typeof import('./../components/AppUiProvider.vue')['default']
     CommandMenuPanel: typeof import('./../components/command-menu-panel/index.vue')['default']
     CommandMenuPanelCommandChangeTheme: typeof import('./../components/command-menu-panel/command-change-theme.vue')['default']
     CommandMenuPanelCommandItemHasIcon: typeof import('./../components/command-menu-panel/command-item-has-icon.vue')['default']

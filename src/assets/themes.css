@@ -1,6 +1,5 @@
 /* theme yellow */
 .theme-yellow {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -70,7 +69,6 @@
 
 /* theme red */
 .theme-red {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -140,7 +138,6 @@
 
 /* theme rose */
 .theme-rose {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -210,7 +207,6 @@
 
 /* theme orange */
 .theme-orange {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -280,7 +276,6 @@
 
 /* theme green */
 .theme-green {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -350,7 +345,6 @@
 
 /* theme blue */
 .theme-blue {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -420,7 +414,6 @@
 
 /* theme yellow */
 .theme-yellow {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -490,7 +483,6 @@
 
 /* theme violet */
 .theme-violet {
-  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -556,4 +548,31 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.541 0.281 293.009);
+}
+
+/* Teal inherits the canonical :root / .dark palette in style.css.
+   Zinc remains available for people who explicitly prefer a neutral theme. */
+.theme-zinc {
+  --primary: #34444b;
+  --primary-foreground: #ffffff;
+  --accent: #eef2f4;
+  --accent-foreground: #34444b;
+  --ring: #596974;
+  --sidebar-primary: #34444b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef2f4;
+  --sidebar-accent-foreground: #34444b;
+  --sidebar-ring: #596974;
+}
+.theme-zinc.dark {
+  --primary: #dce6eb;
+  --primary-foreground: #1c2b31;
+  --accent: #304149;
+  --accent-foreground: #dce6eb;
+  --ring: #adbdc5;
+  --sidebar-primary: #dce6eb;
+  --sidebar-primary-foreground: #1c2b31;
+  --sidebar-accent: #304149;
+  --sidebar-accent-foreground: #dce6eb;
+  --sidebar-ring: #adbdc5;
 }
