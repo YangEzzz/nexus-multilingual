@@ -26,7 +26,7 @@ const apiKey = ref('')
 const model = ref('')
 const formError = ref('')
 
-const relayBaseURL = computed(() => settings.value?.relay_base_url || 'https://43.172.5.210:3000/v1')
+const relayBaseURL = computed(() => settings.value?.relay_base_url || 'https://apilink-test.olinkdata.com/v1')
 const configured = computed(() => settings.value?.configured === true)
 
 function errorMessage(error: unknown, fallback: string) {
