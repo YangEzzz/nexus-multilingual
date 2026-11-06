@@ -35,6 +35,16 @@ try {
   const projectSave = await server.ssrLoadModule('/src/lib/project-save.ts')
   const tables = await server.ssrLoadModule('/src/components/data-table/use-generate-vue-table.ts')
   const { resolveSourceLanguage } = await server.ssrLoadModule('/src/lib/source-language.ts')
+  const { mapApiTerm, batchTermUpdatePayload } = await server.ssrLoadModule('/src/lib/terms.ts')
+  await check('batch save serializes mapped term IDs as Go-compatible JSON numbers', () => {
+    const mapped = mapApiTerm({ id: 95, module: 'common', key: 'save', description: '', status: 'pending', translations: [{ language_code: 'en', content: 'Save' }] })
+    assert.equal(mapped.id, '95')
+    const request = JSON.parse(JSON.stringify({ terms: [batchTermUpdatePayload(mapped)] }))
+    assert.equal(request.terms[0].id, 95)
+    assert.deepEqual(request.terms[0].translations, { en: 'Save' })
+    for (const id of ['', '0', '-1', 'abc', '1.5', '9007199254740993'])
+      assert.throws(() => batchTermUpdatePayload({ ...mapped, id }), /词条 ID 无效/)
+  })
   await check('legacy projects and explicit source languages resolve consistently', () => {
     const legacy = [{ code: 'en', name: 'English' }, { code: 'cn', name: '简体中文' }, { code: 'de', name: 'Deutsch' }]
     assert.equal(resolveSourceLanguage(legacy), legacy[1])

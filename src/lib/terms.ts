@@ -24,6 +24,13 @@ export function termUpdatePayload(term: TermItem) {
   }
 }
 
+export function batchTermUpdatePayload(term: TermItem) {
+  const id = Number(term.id)
+  if (!Number.isSafeInteger(id) || id <= 0)
+    throw new Error('词条 ID 无效，请刷新后重试。')
+  return { id, ...termUpdatePayload(term) }
+}
+
 export function buildTranslationPrompt(term: TermItem, template: string): string {
   const reference = Object.entries(term.translations)
     .filter(([, text]) => text)

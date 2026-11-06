@@ -1,4 +1,5 @@
 import type { EntityId, MutationOptions, QueryOptions } from './types'
+import type { TermItem } from '@/types/domain'
 import { api } from '@/request'
 import { encodeId } from './types'
 
@@ -22,7 +23,9 @@ export function publishTerm<T = unknown>(projectId: EntityId, termId: EntityId, 
   return api.post<T>({ ...options, url: `/projects/${encodeId(projectId)}/terms/${encodeId(termId)}/publish` })
 }
 
-export function batchUpdateTerms<T = unknown>(projectId: EntityId, options: MutationOptions = {}) {
+type BatchUpdateTerm = Pick<TermItem, 'module' | 'key' | 'description' | 'status' | 'translations'> & { id: number }
+
+export function batchUpdateTerms<T = unknown>(projectId: EntityId, options: Omit<MutationOptions, 'data'> & { data: { terms: BatchUpdateTerm[] } }) {
   return api.post<T>({ ...options, url: `/projects/${encodeId(projectId)}/terms/batch-update` })
 }
 

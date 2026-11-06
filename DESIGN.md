@@ -116,6 +116,8 @@ Desktop navigation uses explicit labels when expanded and canonical icon tooltip
 
 ### Forms and overlays
 
+Workbench project selection uses a single-line 36px control below the page title, beside the source-to-target language context. Header actions align in one row on desktop and wrap on narrow screens. Editing guidance belongs to the filter/selection status panel, never below an individual header button; disabled actions keep the same geometry as enabled actions.
+
 The #app viewport owns page scrolling and stable scrollbar space; html/body do not scroll. Body-portaled overlays keep their normal background interaction lock through AppUiProvider without extra padding or margin. The page scrollbar stays visible when dialogs, selects, or menus open; overlay scrolling remains independent. Router history restores #app positions, and print uses natural document flow.
 
 Search inputs have accessible labels and immediate clear controls. Authored selects use the shared Reka UI-based primitive. Dialogs and drawers reuse project-owned primitives, keep actions reachable, and display validation or server failures in context.

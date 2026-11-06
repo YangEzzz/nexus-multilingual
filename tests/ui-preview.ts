@@ -112,6 +112,15 @@ window.fetch = async (input, init) => {
     })
     data = { content: translated.join(',\n'), count: translated.length, skipped: selected.length - translated.length }
   }
+  else if (path.endsWith('/terms/batch-update')) {
+    const body = init?.body || (input instanceof Request ? await input.clone().text() : '{}')
+    const request = JSON.parse(String(body))
+    if (request.terms.some((term: { id: unknown }) => typeof term.id !== 'number' || !Number.isSafeInteger(term.id) || term.id <= 0))
+      return new Response(JSON.stringify({ code: 400, message: '回归检查失败：批量编辑词条 ID 必须为正整数' }))
+    if (request.terms.some((term: { id: string | number }) => items.some(item => String(item.id) === String(term.id) && item.status === 'published')))
+      return new Response(JSON.stringify({ code: 400, message: '回归检查失败：批量编辑不应提交已发布词条' }))
+    data = {}
+  }
   else if (path.endsWith('/update') && failReview) {
     failReview = false
     return new Response(JSON.stringify({ code: 500, message: '模拟保存失败：保留输入后重试' }))

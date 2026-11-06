@@ -23,7 +23,7 @@ import { errorMessage } from '@/lib/errors'
 import { diffPlaceholders, extractPlaceholders } from '@/lib/placeholders'
 import { resolveSourceLanguage } from '@/lib/source-language'
 import { captureTermDraft, restoreTermDraft } from '@/lib/term-draft'
-import { DEFAULT_TRANSLATION_PROMPT, mapApiTerm, termUpdatePayload } from '@/lib/terms'
+import { batchTermUpdatePayload, DEFAULT_TRANSLATION_PROMPT, mapApiTerm, termUpdatePayload } from '@/lib/terms'
 import TermEditorSheet from './components/TermEditorSheet.vue'
 import TermExportDialog from './components/TermExportDialog.vue'
 
@@ -486,6 +486,12 @@ function enterEditMode() {
     })
     return
   }
+  if (editableSelectedTerms.value.length === 0) {
+    toast.info('已发布词条不支持表格内编辑', {
+      description: '如需修改译文，请打开词条详情。',
+    })
+    return
+  }
   latestTermsRequest++
   loadingTerms.value = false
   originalTermsJson.value = captureTermDraft(terms.value, selectedTermCache.value)
@@ -498,7 +504,7 @@ async function saveEditMode() {
     return
   if (!can('term.edit'))
     return
-  const selectedTerms = selectedTermsForBulk.value
+  const selectedTerms = editableSelectedTerms.value
 
   if (selectedTerms.length === 0) {
     isGlobalEditing.value = false
@@ -507,10 +513,7 @@ async function saveEditMode() {
 
   isSavingBatch.value = true
   try {
-    const payload = selectedTerms.map(t => ({
-      id: t.id,
-      ...termUpdatePayload(t),
-    }))
+    const payload = selectedTerms.map(batchTermUpdatePayload)
 
     await batchUpdateTerms(projectId.value, {
 
@@ -828,6 +831,19 @@ function isTermSelected(term: TermItem) {
 
 const selectedTermsForBulk = computed(() => {
   return Array.from(selectedTermCache.value.values())
+})
+
+const editableSelectedTerms = computed(() => selectedTermsForBulk.value.filter(term => term.status !== 'published'))
+const canEnterEditMode = computed(() => selectionMode.value === 'explicit' && editableSelectedTerms.value.length > 0)
+const editModeHint = computed(() => {
+  if (selectedCount.value === 0)
+    return '请先勾选需要编辑的未发布词条。'
+  if (selectionMode.value === 'all_filtered')
+    return '表格编辑不支持跨页全选，请取消全选后逐页勾选。'
+  if (editableSelectedTerms.value.length === 0)
+    return '已发布词条不支持表格编辑；修改译文请打开词条详情。'
+  const skipped = selectedCount.value - editableSelectedTerms.value.length
+  return skipped > 0 ? `仅编辑 ${editableSelectedTerms.value.length} 条未发布词条，跳过 ${skipped} 条已发布词条。` : ''
 })
 
 const selectedCount = computed(() => selectionMode.value === 'all_filtered'
@@ -1836,8 +1852,8 @@ function resetProjectState() {
 <template>
   <div class="workspace-page flex min-h-[calc(100svh-3rem)] md:min-h-svh min-w-0 flex-col gap-5">
     <header class="shrink-0 space-y-5">
-      <div class="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
-        <div class="flex min-w-0 flex-wrap gap-3 sm:items-center">
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div class="flex min-w-0 flex-col gap-3">
           <div class="shrink-0">
             <h1 class="text-xl font-semibold tracking-tight text-foreground">
               词条工作台
@@ -1847,47 +1863,42 @@ function resetProjectState() {
             </p>
           </div>
 
-          <div class="hidden h-10 w-px bg-border sm:block" />
+          <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+            <!-- Project Switcher -->
+            <UiDropdownMenu>
+              <UiDropdownMenuTrigger as-child>
+                <UiButton variant="outline" class="h-9 max-w-[min(300px,100%)] justify-start gap-2 bg-background px-3" :aria-label="`当前项目 ${currentProject?.name || '加载中...'}`">
+                  <FolderKanban class="size-4 text-primary" />
+                  <span class="truncate text-sm font-medium leading-5" :title="currentProject?.name">{{ currentProject?.name || '加载中...' }}</span>
+                  <ChevronDown class="ml-1 size-3.5 shrink-0 text-muted-foreground" />
+                </UiButton>
+              </UiDropdownMenuTrigger>
+              <UiDropdownMenuContent align="start" class="w-56">
+                <UiDropdownMenuLabel class="text-xs text-muted-foreground">
+                  切换当前工作项目
+                </UiDropdownMenuLabel>
+                <UiDropdownMenuSeparator />
+                <UiDropdownMenuItem
+                  v-for="p in projects" :key="p.id"
+                  class="flex items-center justify-between"
+                  :class="String(p.id) === projectId && 'bg-primary/10 text-primary font-medium'"
+                  @click="router.push({ query: { ...route.query, project: p.id } })"
+                >
+                  {{ p.name }}
+                  <CheckCircle2 v-if="String(p.id) === projectId" class="w-3 h-3" />
+                </UiDropdownMenuItem>
+              </UiDropdownMenuContent>
+            </UiDropdownMenu>
 
-          <!-- Project Switcher -->
-          <UiDropdownMenu>
-            <UiDropdownMenuTrigger as-child>
-              <UiButton variant="outline" class="h-10 max-w-[300px] justify-start rounded-md bg-background px-3">
-                <span class="mr-2 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                  <FolderKanban class="size-3.5 text-primary" />
-                </span>
-                <span class="min-w-0 text-left">
-                  <span class="block text-xs leading-none text-muted-foreground">当前项目</span>
-                  <span class="mt-1 block truncate text-sm font-medium leading-none">{{ currentProject?.name || '加载中...' }}</span>
-                </span>
-                <ChevronDown class="ml-auto size-4 shrink-0 text-muted-foreground" />
-              </UiButton>
-            </UiDropdownMenuTrigger>
-            <UiDropdownMenuContent align="start" class="w-56">
-              <UiDropdownMenuLabel class="text-xs text-muted-foreground">
-                切换当前工作项目
-              </UiDropdownMenuLabel>
-              <UiDropdownMenuSeparator />
-              <UiDropdownMenuItem
-                v-for="p in projects" :key="p.id"
-                class="flex items-center justify-between"
-                :class="String(p.id) === projectId && 'bg-primary/10 text-primary font-medium'"
-                @click="router.push({ query: { ...route.query, project: p.id } })"
-              >
-                {{ p.name }}
-                <CheckCircle2 v-if="String(p.id) === projectId" class="w-3 h-3" />
-              </UiDropdownMenuItem>
-            </UiDropdownMenuContent>
-          </UiDropdownMenu>
-
-          <div class="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs">
-            <span class="font-medium text-foreground">{{ targetLanguages.find(lang => lang.code === sourceLanguageCode)?.name || '源语言' }}</span>
-            <span class="text-primary">→</span>
-            <span class="truncate text-muted-foreground">{{ Math.max(targetLanguages.length - 1, 0) }} 个目标语种</span>
+            <div class="flex items-center gap-2 whitespace-nowrap text-xs">
+              <span class="font-medium text-foreground">{{ targetLanguages.find(lang => lang.code === sourceLanguageCode)?.name || '源语言' }}</span>
+              <span class="text-primary">→</span>
+              <span class="truncate text-muted-foreground">{{ Math.max(targetLanguages.length - 1, 0) }} 个目标语种</span>
+            </div>
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2 xl:justify-end">
+        <div class="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
           <input
             :ref="bindExcelFileInput"
             type="file"
@@ -2016,12 +2027,13 @@ function resetProjectState() {
             v-permission="'term.edit'"
             variant="secondary"
             class="rounded-md border-primary/20 text-primary hover:bg-primary/5"
+            :disabled="!canEnterEditMode"
+            :aria-describedby="editModeHint ? 'table-edit-hint' : undefined"
             @click="enterEditMode"
           >
             <Edit3 class="w-4 h-4 mr-2" />
             进入编辑模式
           </UiButton>
-
           <div v-else class="flex gap-1 rounded-xl border border-primary/20 bg-primary/[0.07] p-1 animate-in fade-in duration-200">
             <UiButton
               variant="ghost"
@@ -2269,17 +2281,20 @@ function resetProjectState() {
             </UiButton>
           </div>
         </div>
-        <div v-else class="flex min-h-[52px] flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
+        <div v-else id="table-edit-hint" class="flex min-h-[52px] flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
           <div class="flex items-center gap-2">
             <span class="size-1.5 rounded-full bg-primary/60" />
             <span v-if="hasActiveFilters">筛选后显示 {{ totalTerms }} / {{ projectSummary.total }} 条词条</span>
-            <span v-else>勾选词条后可进行批量翻译、校对、发布或删除</span>
+            <span v-else>勾选词条后可编辑、翻译、校对或发布；已发布词条请从详情修改译文。</span>
           </div>
           <UiButton v-if="hasActiveFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" :disabled="isGlobalEditing || stagedChangeOriginals.size > 0" @click="clearAllFilters">
             <X class="mr-1 size-3.5" />
             清除全部筛选
           </UiButton>
         </div>
+        <p v-if="selectedCount > 0 && editModeHint" id="table-edit-hint" class="border-t border-border/70 px-4 py-2 text-xs leading-5 text-muted-foreground" role="status">
+          {{ editModeHint }}
+        </p>
       </div>
 
       <div
